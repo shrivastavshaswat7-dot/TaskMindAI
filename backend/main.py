@@ -7,6 +7,9 @@ from routers import ai_chat
 from routers import documents
 from routers import email_assistant
 from routers import auth
+from routers import priority
+from routers import quiz
+from routers import extract
 
 app = FastAPI(
     title="TaskMindAI API",
@@ -19,6 +22,9 @@ app.include_router(tasks.router)
 app.include_router(ai_chat.router)
 app.include_router(documents.router)
 app.include_router(email_assistant.router)
+app.include_router(priority.router)
+app.include_router(quiz.router)
+app.include_router(extract.router)
 
 # CORS — allow the Vite dev server to make requests
 app.add_middleware(
