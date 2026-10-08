@@ -1,0 +1,11 @@
+{
+  "topics": [
+    { "id": "laplace", "name": "Laplace Transform", "unit": 1, "frequency": 7, "papers_total": 10, "avg_marks": 10, "years": [2019, 2020, 2022, 2023, 2024], "weakness": 80 },
+    { "id": "fourier", "name": "Fourier Series", "unit": 1, "frequency": 6, "papers_total": 10, "avg_marks": 10, "years": [2019, 2021, 2022, 2024], "weakness": 40 },
+    { "id": "matrices", "name": "Matrices & Eigenvalues", "unit": 2, "frequency": 5, "papers_total": 10, "avg_marks": 5, "years": [2020, 2021, 2023], "weakness": 90 },
+    { "id": "complex-variables", "name": "Complex Variables", "unit": 2, "frequency": 4, "papers_total": 10, "avg_marks": 10, "years": [2019, 2022, 2023], "weakness": 60 },
+    { "id": "diff-eq", "name": "Differential Equations", "unit": 1, "frequency": 8, "papers_total": 10, "avg_marks": 5, "years": [2019, 2020, 2021, 2022, 2023, 2024], "weakness": 30 },
+    { "id": "vector-calculus", "name": "Vector Calculus", "unit": 3, "frequency": 3, "papers_total": 10, "avg_marks": 5, "years": [2021, 2024], "weakness": 70 },
+    { "id": "pde", "name": "Partial Differential Equations", "unit": 3, "frequency": 2, "papers_total": 10, "avg_marks": 10, "years": [2020, 2023], "weakness": 50 }
+  ]
+}
