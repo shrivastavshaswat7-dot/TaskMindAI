@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List
 import json
 import google.generativeai as genai
+from config import MODEL_NAMES, is_fallback_error
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -53,24 +54,35 @@ async def chat(request: ChatRequest):
     if request.system_context:
         system_instruction += f"\n\nAdditional context about this student:\n{request.system_context}"
 
-    model = genai.GenerativeModel(
-        "gemini-3.8-flash",
-        system_instruction=system_instruction
-    )
-
-    chat_session = model.start_chat(history=history)
-
     async def generate():
-        try:
-            response = chat_session.send_message(user_input, stream=True)
-            for chunk in response:
-                if chunk.text:
-                    data = json.dumps({"chunk": chunk.text})
-                    yield f"data: {data}\n\n"
-            # Signal end of stream
-            yield f"data: {json.dumps({'done': True})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        last_error = None
+        for name in MODEL_NAMES:
+            started = False
+            try:
+                model = genai.GenerativeModel(
+                    name,
+                    system_instruction=system_instruction
+                )
+                chat_session = model.start_chat(history=history)
+                response = chat_session.send_message(user_input, stream=True)
+                for chunk in response:
+                    if chunk.text:
+                        started = True
+                        data = json.dumps({"chunk": chunk.text})
+                        yield f"data: {data}\n\n"
+                # Signal end of stream
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                return
+            except Exception as e:
+                msg = str(e)
+                # Stream shuru hone ke baad fallback nahi, warna text duplicate hoga
+                if not started and is_fallback_error(e):
+                    print(f"[gemini] {name} fail hua, agla model try kar raha hoon")
+                    last_error = e
+                    continue
+                yield f"data: {json.dumps({'error': msg})}\n\n"
+                return
+        yield f"data: {json.dumps({'error': str(last_error)})}\n\n"
 
     return StreamingResponse(
         generate(),

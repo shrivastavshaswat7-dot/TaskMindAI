@@ -41,6 +41,10 @@ function Layout({ context }) {
             <span>✉</span>
             Email Assistant
           </NavLink>
+          <NavLink to="/pyq" className={linkClass}>
+            <span>◈</span>
+            PYQ Analysis
+          </NavLink>
         </nav>
 
         <button className="logout-btn" onClick={handleLogout}>
