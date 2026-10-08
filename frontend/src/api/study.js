@@ -28,3 +28,12 @@ export const getPriorities = (topics, daysLeft) =>
 // { ranked, hours, days_left } -> { blocks: [{ topic, minutes, why }] }
 export const getPlan = (ranked, hours, daysLeft) =>
   postJson('/api/plan', { ranked, hours, days_left: daysLeft })
+
+// { topic_id } -> { questions: [{ q, options, answer, subtopic }] }
+export const getQuiz = (topicId) =>
+  postJson('/api/quiz', { topic_id: topicId })
+
+// { topic_id, answers } -> { score, total, weak_subtopics, updated_weakness }
+// answers: har question ke liye chuna hua option (question order mein)
+export const submitQuiz = (topicId, answers) =>
+  postJson('/api/quiz/submit', { topic_id: topicId, answers })
