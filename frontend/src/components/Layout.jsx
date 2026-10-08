@@ -45,6 +45,18 @@ function Layout({ context }) {
             <span>◈</span>
             PYQ Analysis
           </NavLink>
+          <NavLink to="/priorities" className={linkClass}>
+            <span>▲</span>
+            Priorities
+          </NavLink>
+          <NavLink to="/study-now" className={linkClass}>
+            <span>▶</span>
+            Study Now
+          </NavLink>
+          <NavLink to="/quiz" className={linkClass}>
+            <span>?</span>
+            Quiz
+          </NavLink>
         </nav>
 
         <button className="logout-btn" onClick={handleLogout}>

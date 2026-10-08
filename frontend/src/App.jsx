@@ -10,6 +10,9 @@ import Attendance from './pages/Attendance'
 import AiAssistant from './pages/AiAssistant'
 import EmailAssistant from './pages/EmailAssistance'
 import PyqAnalysis from './pages/PyqAnalysis'
+import Priorities from './pages/Priorities'
+import StudyNow from './pages/StudyNow'
+import Quiz from './pages/Quiz'
 import './App.css'
 
 function App() {
@@ -32,6 +35,10 @@ function App() {
 
   // /api/extract ke Topic objects (Docs/CONTRACT.md). Priority/plan/quiz pages yahin se padhenge.
   const [topics, setTopics] = useState([])
+  // /api/priorities ka result: { topics, daysLeft, ranked }. `topics` se pata chalta hai result purana toh nahi.
+  const [priorityResult, setPriorityResult] = useState(null)
+  // /api/plan ka result: { ranked, hours, daysLeft, blocks }
+  const [studyPlan, setStudyPlan] = useState(null)
 
   const loadTasks = async (userId) => {
     const { data, error } = await supabase
@@ -411,6 +418,8 @@ function App() {
     setSubjects([])
     setAttendanceRecords([])
     setTopics([])
+    setPriorityResult(null)
+    setStudyPlan(null)
     setEmail('')
     setName('')
   }
@@ -458,6 +467,10 @@ function App() {
     markAttendance,
     topics,
     setTopics,
+    priorityResult,
+    setPriorityResult,
+    studyPlan,
+    setStudyPlan,
     handleLogout,
   }
 
@@ -471,6 +484,9 @@ function App() {
         <Route path="/ai-assistant" element={<AiAssistant />} />
         <Route path="/email-assistant" element={<EmailAssistant />} />
         <Route path="/pyq" element={<PyqAnalysis />} />
+        <Route path="/priorities" element={<Priorities />} />
+        <Route path="/study-now" element={<StudyNow />} />
+        <Route path="/quiz" element={<Quiz />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
