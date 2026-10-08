@@ -9,6 +9,7 @@ import Timetable from './pages/Timetable'
 import Attendance from './pages/Attendance'
 import AiAssistant from './pages/AiAssistant'
 import EmailAssistant from './pages/EmailAssistance'
+import PyqAnalysis from './pages/PyqAnalysis'
 import './App.css'
 
 function App() {
@@ -28,6 +29,9 @@ function App() {
   const [timetable, setTimetable] = useState([])
   const [subjects, setSubjects] = useState([])
   const [attendanceRecords, setAttendanceRecords] = useState([])
+
+  // /api/extract ke Topic objects (Docs/CONTRACT.md). Priority/plan/quiz pages yahin se padhenge.
+  const [topics, setTopics] = useState([])
 
   const loadTasks = async (userId) => {
     const { data, error } = await supabase
@@ -406,6 +410,7 @@ function App() {
     setTimetable([])
     setSubjects([])
     setAttendanceRecords([])
+    setTopics([])
     setEmail('')
     setName('')
   }
@@ -451,6 +456,8 @@ function App() {
     addSubject,
     deleteSubject,
     markAttendance,
+    topics,
+    setTopics,
     handleLogout,
   }
 
@@ -463,6 +470,7 @@ function App() {
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/ai-assistant" element={<AiAssistant />} />
         <Route path="/email-assistant" element={<EmailAssistant />} />
+        <Route path="/pyq" element={<PyqAnalysis />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
