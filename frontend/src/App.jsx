@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './supabase'
 import Layout from './components/Layout'
+import { authFetch } from './api/authFetch'
 import { ensureSubject, loadStudyData, saveTopics, saveWeakness } from './api/studyDb'
 import { clampWeakness, keepIfEqual, normalizeSubjectName, pickActiveSubjectId } from './api/studyMapping'
 import Auth from './pages/Auth'
@@ -285,7 +286,7 @@ function App() {
   const prioritizeTasks = async () => {
     setIsPrioritizing(true)
     try {
-      const response = await fetch('/api/tasks/prioritize', {
+      const response = await authFetch('/api/tasks/prioritize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tasks }),

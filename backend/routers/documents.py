@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import List, Optional
+from auth_utils import get_current_user, resolve_user_id
 from config import supabase, gemini_model
 import io
 import json
@@ -8,6 +9,7 @@ import re
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024   # 10 MB per document
 CHUNK_SIZE = 1500       # characters per chunk
 CHUNK_OVERLAP = 200     # characters of overlap between chunks
 MAX_ANALYSIS_CHARS = 30000
@@ -59,7 +61,7 @@ def simple_search(query: str, chunks: List[dict], top_k: int = 5) -> List[dict]:
 
 class QueryRequest(BaseModel):
     question: str
-    user_id: str
+    user_id: Optional[str] = None       # never trusted for identity; must match the signed-in user if sent
     document_id: Optional[str] = None   # restrict to one doc if provided
 
 
@@ -70,11 +72,11 @@ class QueryResponse(BaseModel):
 
 class DeleteRequest(BaseModel):
     document_id: str
-    user_id: str
+    user_id: Optional[str] = None
 
 
 class AnalyzeRequest(BaseModel):
-    user_id: str
+    user_id: Optional[str] = None
     subject_hint: Optional[str] = None
 
 
@@ -468,16 +470,18 @@ def empty_academic_result(status: str = "uploaded") -> dict:
 
 @router.post("/upload")
 async def upload_document(
-    user_id: str = Form(...),
+    user_id: Optional[str] = Form(None),
     file: UploadFile = File(...),
     doc_kind: str = Form("other"),
     subject_hint: Optional[str] = Form(None),
+    user=Depends(get_current_user),
 ):
     """Upload a PDF or TXT file, extract text, chunk it, and store in Supabase.
 
     Academic kinds (syllabus/notes/pyq) are also analyzed with Gemini.
     Omitting doc_kind keeps the original upload-only behavior.
     """
+    user_id = resolve_user_id(user, user_id)
     doc_kind = (doc_kind or "other").strip().lower()
     if doc_kind not in ALLOWED_DOC_KINDS:
         raise HTTPException(
@@ -486,7 +490,9 @@ async def upload_document(
         )
 
     filename = file.filename or "document"
-    file_bytes = await file.read()
+    file_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 10 MB).")
 
     # Extract text
     if filename.lower().endswith(".pdf"):
@@ -558,9 +564,10 @@ async def upload_document(
 
 
 @router.post("/{document_id}/analyze")
-async def analyze_document(document_id: str, request: AnalyzeRequest):
+async def analyze_document(document_id: str, request: AnalyzeRequest, user=Depends(get_current_user)):
     """Retry Gemini analysis for an already-uploaded document owned by this user."""
-    result = analyze_owned_document(document_id, request.user_id, request.subject_hint)
+    user_id = resolve_user_id(user, request.user_id)
+    result = analyze_owned_document(document_id, user_id, request.subject_hint)
     return {
         "document_id": document_id,
         **result,
@@ -568,8 +575,9 @@ async def analyze_document(document_id: str, request: AnalyzeRequest):
 
 
 @router.get("/list/{user_id}")
-async def list_documents(user_id: str):
-    """List all documents uploaded by a user."""
+async def list_documents(user_id: str, user=Depends(get_current_user)):
+    """List all documents uploaded by the signed-in user."""
+    user_id = resolve_user_id(user, user_id)   # the id in the URL is only accepted if it is the caller's own
     res = supabase.table("documents")\
         .select("id, filename, created_at")\
         .eq("user_id", user_id)\
@@ -579,12 +587,13 @@ async def list_documents(user_id: str):
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query_documents(request: QueryRequest):
+async def query_documents(request: QueryRequest, user=Depends(get_current_user)):
     """Ask a question — retrieve relevant chunks and answer with Gemini."""
+    user_id = resolve_user_id(user, request.user_id)
     # Fetch chunks
     query = supabase.table("document_chunks")\
         .select("id, chunk_text, chunk_index, document_id")\
-        .eq("user_id", request.user_id)
+        .eq("user_id", user_id)
 
     if request.document_id:
         query = query.eq("document_id", request.document_id)
@@ -643,12 +652,13 @@ Answer in a clear, concise way. Cite which document(s) you drew from at the end 
 
 
 @router.delete("/delete")
-async def delete_document(request: DeleteRequest):
+async def delete_document(request: DeleteRequest, user=Depends(get_current_user)):
     """Delete a document and all its chunks."""
+    user_id = resolve_user_id(user, request.user_id)
     res = supabase.table("documents")\
         .delete()\
         .eq("id", request.document_id)\
-        .eq("user_id", request.user_id)\
+        .eq("user_id", user_id)\
         .execute()
 
     return {"message": "Document deleted successfully."}

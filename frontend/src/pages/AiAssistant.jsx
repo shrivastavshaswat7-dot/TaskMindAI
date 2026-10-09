@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { supabase } from '../supabase'
+import { authFetch } from '../api/authFetch'
 
 /* ─── simple markdown renderer ─────────────────────────────────────────── */
 function renderMarkdown(text) {
@@ -88,7 +89,7 @@ export default function AiAssistant() {
     setMessages(prev => [...prev, { id: assistantMsgId, role: 'model', content: '', streaming: true }])
 
     try {
-      const response = await fetch('/api/ai/chat', {
+      const response = await authFetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -166,7 +167,7 @@ export default function AiAssistant() {
   /* ── Document helpers ── */
   const fetchDocuments = async (uid) => {
     try {
-      const res = await fetch(`/api/documents/list/${uid}`)
+      const res = await authFetch(`/api/documents/list/${uid}`)
       const data = await res.json()
       setDocuments(data.documents || [])
     } catch (e) {
@@ -186,7 +187,7 @@ export default function AiAssistant() {
     formData.append('file', file)
 
     try {
-      const res = await fetch('/api/documents/upload', {
+      const res = await authFetch('/api/documents/upload', {
         method: 'POST',
         body: formData,
       })
@@ -215,7 +216,7 @@ export default function AiAssistant() {
   const handleDeleteDoc = async (docId) => {
     if (!userId) return
     try {
-      await fetch('/api/documents/delete', {
+      await authFetch('/api/documents/delete', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ document_id: docId, user_id: userId }),
@@ -234,7 +235,7 @@ export default function AiAssistant() {
     setDocAnswer(null)
 
     try {
-      const res = await fetch('/api/documents/query', {
+      const res = await authFetch('/api/documents/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

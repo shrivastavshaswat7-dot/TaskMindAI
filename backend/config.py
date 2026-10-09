@@ -77,3 +77,9 @@ ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+# Deployed frontend URL(s), comma separated, e.g. EXTRA_ALLOWED_ORIGINS=https://taskmind.example.com
+ALLOWED_ORIGINS += [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("EXTRA_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip() and origin.strip() != "*"
+]

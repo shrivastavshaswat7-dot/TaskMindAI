@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import ALLOWED_ORIGINS
+from auth_utils import get_current_user
 
 from routers import tasks
 from routers import ai_chat
@@ -17,14 +18,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# auth.router stays public (direct password reset is disabled unless explicitly enabled, see routers/auth.py).
+# Every other API needs a valid Supabase access token (Authorization: Bearer <token>).
 app.include_router(auth.router)
-app.include_router(tasks.router)
-app.include_router(ai_chat.router)
-app.include_router(documents.router)
-app.include_router(email_assistant.router)
-app.include_router(priority.router)
-app.include_router(quiz.router)
-app.include_router(extract.router)
+_protected = [Depends(get_current_user)]
+app.include_router(tasks.router, dependencies=_protected)
+app.include_router(ai_chat.router, dependencies=_protected)
+app.include_router(documents.router, dependencies=_protected)
+app.include_router(email_assistant.router, dependencies=_protected)
+app.include_router(priority.router, dependencies=_protected)
+app.include_router(quiz.router, dependencies=_protected)
+app.include_router(extract.router, dependencies=_protected)
 
 # CORS — allow the Vite dev server to make requests
 app.add_middleware(

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { authFetch } from '../api/authFetch'
 
 const TONES = [
   { value: 'formal', label: '🎩 Formal', desc: 'Official & professional' },
@@ -42,7 +43,7 @@ export default function EmailAssistant() {
         adjust,
       }
 
-      const res = await fetch('/api/email/draft-reply', {
+      const res = await authFetch('/api/email/draft-reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
