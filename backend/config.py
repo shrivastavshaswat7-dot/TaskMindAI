@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
 from supabase import create_client, Client
 
 load_dotenv()
@@ -17,19 +18,26 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Fallback order — sabse pehla model primary hai. Chat bhi yahi list use karta hai.
+# Tez chalne wale models pehle: gemini-3.8-flash / 3.7-flash ne 504 (timeout) diya,
+# jisse har AI request ~25-30s leti thi. Wo ab aakhir mein fallback ke liye hain.
 MODEL_NAMES = [
-    "gemini-3.8-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
     "gemini-2.5-flash",
 ]
 
+# Har Gemini call ka timeout (seconds), taaki ek atka hua model poori request na roke
+GEMINI_TIMEOUT_SECONDS = 60
+
 
 def is_fallback_error(e: Exception) -> bool:
-    """Quota/rate-limit (429) ya model not found (404) pe agla model try karna hai."""
+    """Quota/rate-limit (429), model not found (404), timeout ya 5xx pe agla model try karna hai."""
+    if isinstance(e, (google_exceptions.ServerError, TimeoutError)):
+        return True
     msg = str(e)
     return "429" in msg or "quota" in msg.lower() or "404" in msg
 
@@ -42,6 +50,7 @@ class FallbackModel:
         self.models = [genai.GenerativeModel(n) for n in names]
 
     def generate_content(self, *args, **kwargs):
+        kwargs.setdefault("request_options", {"timeout": GEMINI_TIMEOUT_SECONDS})
         last_error = None
         for name, model in zip(self.names, self.models):
             try:
