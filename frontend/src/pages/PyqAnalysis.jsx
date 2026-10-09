@@ -5,11 +5,17 @@ import { extractTopics } from '../api/study'
 const MAX_FILES = 10
 
 function PyqAnalysis() {
-  const { topics, setTopics } = useOutletContext()
+  const { topics, studySubjects, activeSubjectId, saveExtractedTopics } = useOutletContext()
   const fileInputRef = useRef(null)
   const [files, setFiles] = useState([])
   const [isExtracting, setIsExtracting] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  // Naya naam likho toh naya subject banega; wahi naam dobara likho toh usi subject mein update hoga.
+  // Jab tak user ne kuch likha nahi, active subject ka naam hi default rehta hai.
+  const [typedSubject, setTypedSubject] = useState(null)
+  const subjectName =
+    typedSubject ?? (studySubjects.find((s) => s.id === activeSubjectId)?.name || '')
 
   const pickFiles = (fileList) => {
     const pdfs = Array.from(fileList || []).filter((f) =>
@@ -23,9 +29,15 @@ function PyqAnalysis() {
     if (files.length === 0 || isExtracting) return
     setIsExtracting(true)
     setError('')
+    setNotice('')
     try {
       const data = await extractTopics(files)
-      setTopics(data.topics || [])
+      const result = await saveExtractedTopics(subjectName, data.topics || [])
+      if (result.error) {
+        setError(`Topics are shown but could not be saved: ${result.error.message}`)
+      } else {
+        setNotice(`Saved to "${result.subject.name}". They will be here next time you log in.`)
+      }
       setFiles([])
       if (fileInputRef.current) fileInputRef.current.value = ''
     } catch (err) {
@@ -53,6 +65,24 @@ function PyqAnalysis() {
             <h2>Upload Papers</h2>
             <p>Up to {MAX_FILES} PDFs, one subject at a time</p>
           </div>
+        </div>
+
+        <div className="add-task-form study-form" style={{ marginBottom: '16px' }}>
+          <label className="priority-days-label" htmlFor="pyq-subject">Subject</label>
+          <input
+            id="pyq-subject"
+            className="date-input"
+            list="pyq-subject-list"
+            placeholder="General"
+            maxLength={80}
+            value={subjectName}
+            onChange={(e) => setTypedSubject(e.target.value)}
+          />
+          <datalist id="pyq-subject-list">
+            {studySubjects.map((s) => (
+              <option key={s.id} value={s.name} />
+            ))}
+          </datalist>
         </div>
 
         <div
@@ -90,6 +120,7 @@ function PyqAnalysis() {
           {isExtracting ? 'Analyzing papers...' : `✨ Extract Topics${files.length ? ` (${files.length})` : ''}`}
         </button>
 
+        {notice && <p className="doc-filter-note">{notice}</p>}
         {error && (
           <div className="doc-answer-error" style={{ marginTop: '16px' }}>
             ❌ {error}

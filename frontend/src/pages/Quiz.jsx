@@ -7,7 +7,7 @@ const isValidQuestion = (q) =>
   q && typeof q.q === 'string' && Array.isArray(q.options) && q.options.length > 0
 
 function Quiz() {
-  const { topics, setTopics, priorityResult, setPriorityResult } = useOutletContext()
+  const { topics, applyTopicWeakness, priorityResult, setPriorityResult } = useOutletContext()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -89,10 +89,8 @@ function Quiz() {
       return
     }
 
-    const updatedTopics = topics.map((t) =>
-      t.id === topic.id ? { ...t, weakness: Math.max(0, Math.min(100, weakness)) } : t
-    )
-    setTopics(updatedTopics)
+    // State + Supabase dono mein weakness update; nayi topics list wapas aati hai
+    const updatedTopics = applyTopicWeakness(topic.id, weakness)
 
     if (priorityResult) {
       setIsLoading(true)
