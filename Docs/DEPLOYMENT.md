@@ -10,7 +10,7 @@ the repo's `render.yaml` Blueprint creates both the backend (Python web service)
 
 | Option | Cost | Notes |
 |---|---|---|
-| **Render Blueprint (recommended)** | Free tier available | One dashboard and one file. **Free web services sleep after ~15 minutes idle; the first request then takes ~30-60 s.** Warm it up before a demo (see below) or use a paid instance (~$7/month, needs your approval) |
+| **Render Blueprint (recommended)** | Free tier available | One dashboard and one file. **Free web services sleep after ~15 minutes idle; the first request then takes ~30-60 s.** Warm it up before a demo (see below) or use a paid instance (check Render's current pricing; needs your approval) |
 | Frontend on Netlify / Vercel / Cloudflare Pages, backend on Render | Free tier | Same backend steps. SPA fallback files for these hosts are already included: `frontend/public/_redirects` (Netlify, Cloudflare Pages) and `frontend/vercel.json` |
 | Fly.io / Railway for the backend | Usually needs a card | Not prepared; the start command below works anywhere |
 
@@ -55,6 +55,8 @@ the repo's `render.yaml` Blueprint creates both the backend (Python web service)
    placeholder for the two URL variables), note the two `onrender.com` addresses, then set
    `EXTRA_ALLOWED_ORIGINS` (backend) to the frontend address and `VITE_API_BASE_URL` (frontend) to the backend address.
    Redeploy **both**: the backend to pick up CORS, the frontend because Vite embeds `VITE_*` values at build time.
+   If `EXTRA_ALLOWED_ORIGINS` is missing in production the backend logs a `[config] WARNING` at startup and the browser
+   shows CORS errors; a `VITE_API_BASE_URL` without `https://` is corrected automatically.
 3. **Supabase dashboard -> Authentication -> URL Configuration:** set *Site URL* to the frontend address and add it (with `/**`)
    to *Redirect URLs*; configure SMTP so reset emails are sent. Without this the password-reset link goes to the wrong place.
 4. **Check the deployment** (replace the hosts):

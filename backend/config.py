@@ -85,3 +85,6 @@ ALLOWED_ORIGINS += [
     for origin in os.getenv("EXTRA_ALLOWED_ORIGINS", "").split(",")
     if origin.strip() and origin.strip() != "*"
 ]
+if os.getenv("APP_ENV", "").strip().lower() == "production" and not ALLOWED_ORIGINS:
+    print("[config] WARNING: APP_ENV=production but EXTRA_ALLOWED_ORIGINS is empty - "
+          "browsers will be blocked by CORS. Set it to the frontend URL.")
