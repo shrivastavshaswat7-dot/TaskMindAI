@@ -63,7 +63,7 @@ Four different kinds of evidence are used below. They are not equivalent.
 ## Tests (reproducible)
 
 ```bash
-cd backend  && venv/Scripts/python -m unittest discover -s tests   # 73 tests
+cd backend  && venv/Scripts/python -m unittest discover -s tests   # 77 tests
 cd frontend && npm test                                            # 13 unit tests
 cd frontend && npm run test:e2e                                    # 19 browser tests, MOCKED backend (uses the installed Edge; BROWSER_CHANNEL=chrome for Chrome)
 cd frontend && npm run build
@@ -99,9 +99,10 @@ and logout. It only reads data and never prints the credentials or token. Withou
 - **"Too many requests" (429):** wait a minute (limit is 30 AI calls per user per minute).
 - **Suddenly back on the login screen:** the session expired and could not be refreshed; log in again.
 
-## Deployment checklist (nothing has been deployed)
+## Deployment (nothing has been deployed)
 
-No hosting provider is configured in the repo and nothing was deployed. What a deployment needs:
+See **[Docs/DEPLOYMENT.md](DEPLOYMENT.md)** for the recommended setup (Render Blueprint in `render.yaml`), the exact steps and the
+security checklist. Summary of what a deployment needs:
 
 - **Frontend:** any static host. Build with `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` and
   `VITE_API_BASE_URL=https://<backend host>` (the dev proxy does not exist in production), then serve `frontend/dist`.

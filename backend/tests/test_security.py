@@ -299,5 +299,21 @@ class CorsTest(unittest.TestCase):
         self.assertNotIn("*", main.ALLOWED_ORIGINS)
 
 
+class ProductionDocsTest(unittest.TestCase):
+    def test_api_docs_are_hidden_in_production(self):
+        from fastapi import FastAPI
+        prod = TestClient(FastAPI(**main.docs_settings("production")))
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            self.assertEqual(prod.get(path).status_code, 404, path)
+
+    def test_api_docs_remain_available_in_development(self):
+        from fastapi import FastAPI
+        dev = TestClient(FastAPI(**main.docs_settings("")))
+        self.assertEqual(dev.get("/docs").status_code, 200)
+
+    def test_app_env_is_read_case_insensitively(self):
+        self.assertEqual(main.docs_settings(" Production ")["openapi_url"], None)
+
+
 if __name__ == "__main__":
     unittest.main()

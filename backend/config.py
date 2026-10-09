@@ -73,10 +73,12 @@ class FallbackModel:
 gemini_model = FallbackModel(MODEL_NAMES)
 
 # --- App Settings ---
-ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+# Local dev origins are only allowed outside production (APP_ENV=production uses just EXTRA_ALLOWED_ORIGINS)
+ALLOWED_ORIGINS = (
+    []
+    if os.getenv("APP_ENV", "").strip().lower() == "production"
+    else ["http://localhost:5173", "http://127.0.0.1:5173"]
+)
 # Deployed frontend URL(s), comma separated, e.g. EXTRA_ALLOWED_ORIGINS=https://taskmind.example.com
 ALLOWED_ORIGINS += [
     origin.strip().rstrip("/")

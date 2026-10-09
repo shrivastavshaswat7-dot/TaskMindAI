@@ -20,4 +20,4 @@ TaskMindAI is designed to help students manage their timetable, attendance, task
 
 ## Run it, test it, demo it
 
-See [Docs/HACKATHON_DEMO.md](Docs/HACKATHON_DEMO.md) for setup (env templates: `backend/.env.example`, `frontend/.env.example`), test commands, the demo script, known limitations and what has been verified.
+Deployment: [Docs/DEPLOYMENT.md](Docs/DEPLOYMENT.md). See [Docs/HACKATHON_DEMO.md](Docs/HACKATHON_DEMO.md) for setup (env templates: `backend/.env.example`, `frontend/.env.example`), test commands, the demo script, known limitations and what has been verified.

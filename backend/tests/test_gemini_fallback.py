@@ -117,6 +117,12 @@ class AllowedOriginsTest(unittest.TestCase):
         cfg = self.reload_config(None)
         self.assertEqual(cfg.ALLOWED_ORIGINS, ["http://localhost:5173", "http://127.0.0.1:5173"])
 
+    def test_production_allows_only_the_configured_frontend(self):
+        env = {"APP_ENV": "production", "EXTRA_ALLOWED_ORIGINS": "https://app.example.com"}
+        with mock.patch.dict(os.environ, env):
+            cfg = load_config()
+        self.assertEqual(cfg.ALLOWED_ORIGINS, ["https://app.example.com"])
+
     def test_extra_origins_are_added_and_wildcard_is_ignored(self):
         cfg = self.reload_config("https://app.example.com/, *, ,https://b.example.com")
         self.assertIn("https://app.example.com", cfg.ALLOWED_ORIGINS)
