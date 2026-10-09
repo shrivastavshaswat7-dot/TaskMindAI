@@ -29,11 +29,19 @@ export const getPriorities = (topics, daysLeft) =>
 export const getPlan = (ranked, hours, daysLeft) =>
   postJson('/api/plan', { ranked, hours, days_left: daysLeft })
 
-// { topic_id } -> { questions: [{ q, options, answer, subtopic }] }
-export const getQuiz = (topicId) =>
-  postJson('/api/quiz', { topic_id: topicId })
+// { topic_id, topic_name } -> { questions: [{ q, options, answer, subtopic }] }
+// topic_name zaroori hai: /api/extract ke topic ids backend ko pehchaane nahi jaate.
+export const getQuiz = (topicId, topicName) =>
+  postJson('/api/quiz', { topic_id: topicId, topic_name: topicName })
 
-// { topic_id, answers } -> { score, total, weak_subtopics, updated_weakness }
+// { topic_id, answers, questions, current_weakness } -> { score, total, weak_subtopics, updated_weakness }
 // answers: har question ke liye chuna hua option (question order mein)
-export const submitQuiz = (topicId, answers) =>
-  postJson('/api/quiz/submit', { topic_id: topicId, answers })
+// questions: wahi jo user ko dikhaye gaye (backend cache pe depend na kare)
+// current_weakness: topic ki abhi ki weakness (app ke state se)
+export const submitQuiz = (topicId, answers, questions, currentWeakness) =>
+  postJson('/api/quiz/submit', {
+    topic_id: topicId,
+    answers,
+    questions,
+    current_weakness: currentWeakness,
+  })
