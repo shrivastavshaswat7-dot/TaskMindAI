@@ -1,7 +1,11 @@
-import { Outlet, NavLink } from 'react-router-dom'
+import { Outlet, NavLink, useLocation } from 'react-router-dom'
+
+const STUDY_ROUTES = ['/pyq', '/priorities', '/study-now', '/quiz']
 
 function Layout({ context }) {
-  const { handleLogout } = context
+  const { handleLogout, studySubjects, activeSubjectId, selectSubject } = context
+  const { pathname } = useLocation()
+  const showSubjectPicker = STUDY_ROUTES.includes(pathname) && studySubjects.length > 0
 
   const linkClass = ({ isActive }) =>
     `nav-item${isActive ? ' active' : ''}`
@@ -65,6 +69,23 @@ function Layout({ context }) {
       </aside>
 
       <main className="dashboard-main">
+        {showSubjectPicker && (
+          <div className="add-task-form study-form" style={{ marginBottom: '16px' }}>
+            <label className="priority-days-label" htmlFor="study-subject">Subject</label>
+            <select
+              id="study-subject"
+              className="priority-select"
+              value={activeSubjectId}
+              onChange={(e) => selectSubject(e.target.value)}
+            >
+              {studySubjects.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}{s.unsaved ? ' (not saved)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <Outlet context={context} />
       </main>
     </div>

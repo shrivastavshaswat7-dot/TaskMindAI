@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './supabase'
 import Layout from './components/Layout'
+import { ensureSubject, loadStudyData, saveTopics, saveWeakness } from './api/studyDb'
+import { clampWeakness, keepIfEqual, normalizeSubjectName, pickActiveSubjectId } from './api/studyMapping'
 import Auth from './pages/Auth'
 import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
@@ -14,6 +16,9 @@ import Priorities from './pages/Priorities'
 import StudyNow from './pages/StudyNow'
 import Quiz from './pages/Quiz'
 import './App.css'
+
+const NO_TOPICS = []
+const ACTIVE_SUBJECT_KEY = 'taskmind.activeStudySubject'
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
@@ -33,8 +38,10 @@ function App() {
   const [subjects, setSubjects] = useState([])
   const [attendanceRecords, setAttendanceRecords] = useState([])
 
-  // /api/extract ke Topic objects (Docs/CONTRACT.md). Priority/plan/quiz pages yahin se padhenge.
-  const [topics, setTopics] = useState([])
+  // PYQ topics, subject ke hisaab se (Supabase `study_topics` mein saved). `topics` neeche active subject ke hain.
+  const [studySubjects, setStudySubjects] = useState([])
+  const [activeSubjectId, setActiveSubjectId] = useState('')
+  const [topicsBySubject, setTopicsBySubject] = useState({})
   // /api/priorities ka result: { topics, daysLeft, ranked }. `topics` se pata chalta hai result purana toh nahi.
   const [priorityResult, setPriorityResult] = useState(null)
   // /api/plan ka result: { ranked, hours, daysLeft, blocks }
@@ -106,12 +113,38 @@ function App() {
     setAttendanceRecords(data || [])
   }
 
+  const loadStudy = async (userId) => {
+    try {
+      const { subjects: loaded, topicsBySubject: grouped } = await loadStudyData(userId)
+      let remembered = ''
+      try {
+        remembered = localStorage.getItem(ACTIVE_SUBJECT_KEY) || ''
+      } catch {
+        // private mode: koi baat nahi
+      }
+      // Auth event (jaise tab refocus) pe dobara load hota hai: jo badla nahi uska reference na badlo,
+      // current subject na badlo, aur "not saved" local subjects/topics na mitao.
+      setStudySubjects((prev) =>
+        keepIfEqual(prev, [...loaded, ...prev.filter((s) => s.unsaved && !loaded.some((l) => l.id === s.id))])
+      )
+      setTopicsBySubject((prev) => {
+        const localOnly = Object.fromEntries(Object.entries(prev).filter(([id]) => id.startsWith('local:')))
+        return keepIfEqual(prev, { ...grouped, ...localOnly })
+      })
+      setActiveSubjectId((current) => pickActiveSubjectId(loaded, current, remembered) || current)
+    } catch (error) {
+      // Migration (backend/migrations/study_topics.sql) apply na hui ho toh bhi app chalna chahiye
+      console.error('Error loading study topics:', error)
+    }
+  }
+
   const loadAllData = async (userId) => {
     await Promise.all([
       loadTasks(userId),
       loadTimetable(userId),
       loadSubjects(userId),
-      loadAttendance(userId)
+      loadAttendance(userId),
+      loadStudy(userId)
     ])
   }
 
@@ -409,6 +442,74 @@ function App() {
     return { data }
   }
 
+  const topics = topicsBySubject[activeSubjectId] || NO_TOPICS
+
+  const activateSubject = (subjectId) => {
+    setActiveSubjectId(subjectId)
+    // Ranking/plan purane topics ke the
+    setPriorityResult(null)
+    setStudyPlan(null)
+    try {
+      localStorage.setItem(ACTIVE_SUBJECT_KEY, subjectId)
+    } catch {
+      // ignore
+    }
+  }
+
+  const selectSubject = (subjectId) => {
+    if (subjectId !== activeSubjectId) activateSubject(subjectId)
+  }
+
+  // /api/extract ke topics ko subject mein save karo. Wahi PDFs dobara dene par duplicate nahi banta
+  // (unique user+subject+topic) aur purani weakness bachi rehti hai.
+  // Save fail ho toh topics is session ke liye dikhte hain, aur error wapas milta hai.
+  const saveExtractedTopics = async (subjectName, extracted) => {
+    const name = normalizeSubjectName(subjectName)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    let subject
+    let list = extracted
+    let error = null
+    try {
+      if (!user) throw new Error('Not signed in')
+      subject = await ensureSubject(user.id, name, studySubjects.filter((s) => !s.unsaved))
+      list = await saveTopics(user.id, subject.id, extracted)
+    } catch (err) {
+      console.error('Error saving topics:', err)
+      error = err
+      subject =
+        studySubjects.find((s) => s.name.toLowerCase() === name.toLowerCase()) ||
+        { id: `local:${name.toLowerCase()}`, name, unsaved: true }
+    }
+
+    setStudySubjects((prev) => (prev.some((s) => s.id === subject.id) ? prev : [...prev, subject]))
+    setTopicsBySubject((prev) => ({ ...prev, [subject.id]: list }))
+    activateSubject(subject.id)
+    return { subject, error }
+  }
+
+  // Quiz ke baad ek topic ki weakness badlo. Nayi topic list wapas deti hai (priorities dobara nikalne ke liye),
+  // aur Supabase mein save karti hai (fail ho toh sirf console error; UI state phir bhi update rehti hai).
+  const applyTopicWeakness = (topicId, weakness) => {
+    const value = clampWeakness(weakness)
+    if (value === null) return topics
+    const updated = topics.map((t) => (t.id === topicId ? { ...t, weakness: value } : t))
+    setTopicsBySubject((prev) => ({ ...prev, [activeSubjectId]: updated }))
+
+    if (!String(activeSubjectId).startsWith('local:')) {
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user) {
+          saveWeakness(user.id, activeSubjectId, topicId, value).catch((error) =>
+            console.error('Error saving weakness:', error)
+          )
+        }
+      })
+    }
+    return updated
+  }
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
 
@@ -417,7 +518,9 @@ function App() {
     setTimetable([])
     setSubjects([])
     setAttendanceRecords([])
-    setTopics([])
+    setStudySubjects([])
+    setActiveSubjectId('')
+    setTopicsBySubject({})
     setPriorityResult(null)
     setStudyPlan(null)
     setEmail('')
@@ -466,7 +569,11 @@ function App() {
     deleteSubject,
     markAttendance,
     topics,
-    setTopics,
+    studySubjects,
+    activeSubjectId,
+    selectSubject,
+    saveExtractedTopics,
+    applyTopicWeakness,
     priorityResult,
     setPriorityResult,
     studyPlan,
