@@ -40,7 +40,7 @@ function Quiz() {
 
     let loaded = []
     try {
-      const data = await getQuiz(topic.id)
+      const data = await getQuiz(topic.id, topic.name)
       loaded = (data.questions || []).filter(isValidQuestion)
     } catch {
       // Backend na ho toh bhi page chale; neeche mock use hoga
@@ -71,7 +71,7 @@ function Quiz() {
     try {
       const data = isMock
         ? mockSubmit(questions, answers, topic.weakness ?? 50)
-        : await submitQuiz(topic.id, answers)
+        : await submitQuiz(topic.id, answers, questions, topic.weakness ?? 50)
       setResult(data)
       setPhase('result')
     } catch (err) {
