@@ -16,7 +16,8 @@ the repo's `render.yaml` Blueprint creates both the backend (Python web service)
 
 ## What is prepared in the repo
 
-- `render.yaml`: both services, health check `/api/health`, SPA rewrite, `APP_ENV=production`, and every secret declared with
+- `render.yaml`: both services, health check `/api/health`, SPA rewrite, `APP_ENV=production`, `NODE_VERSION=22.12.0` for the frontend build
+  (Vite 8 needs Node 20.19+/22.12+), and every secret declared with
   `sync: false` (Render asks for the value; nothing is stored in git).
 - `frontend/public/_redirects`, `frontend/vercel.json`: SPA fallback (the app uses `BrowserRouter`, so `/priorities` must serve `index.html`).
 - `backend/.env.example`, `frontend/.env.example`: placeholders for every variable.
