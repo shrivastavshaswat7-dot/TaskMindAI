@@ -5,8 +5,10 @@ from auth_utils import get_current_user, resolve_user_id
 from config import supabase, gemini_model
 import io
 import json
+import logging
 import re
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024   # 10 MB per document
@@ -29,8 +31,9 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         for page in reader.pages:
             text += page.extract_text() or ""
         return text
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse PDF: {str(e)}")
+    except Exception:
+        logger.exception("PDF parsing failed")
+        raise HTTPException(status_code=400, detail="Failed to parse the PDF. Is it a valid, text-based PDF?")
 
 
 def chunk_text(text: str) -> List[str]:
@@ -438,9 +441,10 @@ def analyze_owned_document(document_id: str, user_id: str, subject_hint: Optiona
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.exception("Document analysis failed")
         cleanup_document_extractions(document_id, user_id)
-        error_message = str(e)
+        error_message = "Analysis failed. Please try again."
         update_document_processing(
             document_id,
             user_id,
@@ -636,8 +640,9 @@ Answer in a clear, concise way. Cite which document(s) you drew from at the end 
     try:
         response = gemini_model.generate_content(prompt)
         answer = response.text
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI query failed: {str(e)}")
+    except Exception:
+        logger.exception("Document Q&A failed")
+        raise HTTPException(status_code=500, detail="The AI query failed. Please try again.")
 
     sources = [
         {

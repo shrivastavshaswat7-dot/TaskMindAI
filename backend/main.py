@@ -1,7 +1,7 @@
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import ALLOWED_ORIGINS
-from auth_utils import get_current_user
+from auth_utils import get_current_user, rate_limit
 
 from routers import tasks
 from routers import ai_chat
@@ -22,13 +22,15 @@ app = FastAPI(
 # Every other API needs a valid Supabase access token (Authorization: Bearer <token>).
 app.include_router(auth.router)
 _protected = [Depends(get_current_user)]
-app.include_router(tasks.router, dependencies=_protected)
-app.include_router(ai_chat.router, dependencies=_protected)
-app.include_router(documents.router, dependencies=_protected)
-app.include_router(email_assistant.router, dependencies=_protected)
+# Gemini-backed routes are also rate limited per user (AI_RATE_LIMIT_PER_MINUTE, default 30)
+_ai = [Depends(rate_limit)]
+app.include_router(tasks.router, dependencies=_ai)
+app.include_router(ai_chat.router, dependencies=_ai)
+app.include_router(documents.router, dependencies=_ai)
+app.include_router(email_assistant.router, dependencies=_ai)
 app.include_router(priority.router, dependencies=_protected)
-app.include_router(quiz.router, dependencies=_protected)
-app.include_router(extract.router, dependencies=_protected)
+app.include_router(quiz.router, dependencies=_ai)
+app.include_router(extract.router, dependencies=_ai)
 
 # CORS — allow the Vite dev server to make requests
 app.add_middleware(

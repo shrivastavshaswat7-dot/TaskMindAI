@@ -1,8 +1,12 @@
 """Server-side authentication: identity comes from a verified Supabase access token,
 never from a user_id sent in the request body, path or form."""
+import os
+import threading
+import time
+from collections import defaultdict, deque
 from typing import Optional
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 from config import supabase
 
@@ -33,3 +37,29 @@ def resolve_user_id(user, supplied: Optional[str] = None) -> str:
     if supplied is not None and str(supplied) != str(user.id):
         raise HTTPException(status_code=403, detail="You can only access your own data.")
     return str(user.id)
+
+
+# --- per-user rate limit for the Gemini-backed endpoints (protects the API quota) -----------------
+# In-memory sliding window: per server process, reset on restart. Enough for one backend instance.
+RATE_LIMIT_PER_MINUTE = int(os.getenv("AI_RATE_LIMIT_PER_MINUTE", "30"))
+_RATE_WINDOW_SECONDS = 60
+_hits = defaultdict(deque)
+_hits_lock = threading.Lock()
+
+
+def rate_limit(user=Depends(get_current_user)):
+    """Dependency: at most RATE_LIMIT_PER_MINUTE AI requests per user per minute, else 429."""
+    now = time.monotonic()
+    with _hits_lock:
+        window = _hits[str(user.id)]
+        while window and now - window[0] > _RATE_WINDOW_SECONDS:
+            window.popleft()
+        if len(window) >= RATE_LIMIT_PER_MINUTE:
+            retry_after = max(1, int(_RATE_WINDOW_SECONDS - (now - window[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please wait a moment and try again.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        window.append(now)
+    return user

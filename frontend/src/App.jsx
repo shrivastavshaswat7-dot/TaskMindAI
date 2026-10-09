@@ -149,6 +149,21 @@ function App() {
     ])
   }
 
+  // Sab user-specific data hatao (logout button ya expired session, dono pe), taaki agla user purana data na dekhe
+  const clearUserData = () => {
+    setTasks([])
+    setTimetable([])
+    setSubjects([])
+    setAttendanceRecords([])
+    setStudySubjects([])
+    setActiveSubjectId('')
+    setTopicsBySubject({})
+    setPriorityResult(null)
+    setStudyPlan(null)
+    setEmail('')
+    setName('')
+  }
+
   useEffect(() => {
     if (window.location.hash.includes('type=recovery')) {
       setIsRecoveryMode(true)
@@ -186,6 +201,8 @@ function App() {
 
       if (!window.location.hash.includes('type=recovery')) {
         setIsLoggedIn(!!session)
+
+        if (!session) clearUserData()
 
         if (session) {
           const user = session.user
@@ -515,17 +532,7 @@ function App() {
     await supabase.auth.signOut()
 
     setIsLoggedIn(false)
-    setTasks([])
-    setTimetable([])
-    setSubjects([])
-    setAttendanceRecords([])
-    setStudySubjects([])
-    setActiveSubjectId('')
-    setTopicsBySubject({})
-    setPriorityResult(null)
-    setStudyPlan(null)
-    setEmail('')
-    setName('')
+    clearUserData()
   }
 
   if (!isLoggedIn || isRecoveryMode) {

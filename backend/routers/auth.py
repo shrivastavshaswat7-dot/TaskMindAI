@@ -1,9 +1,11 @@
+import logging
 import os
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from config import supabase
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
@@ -42,5 +44,6 @@ async def reset_password_direct(request: DirectResetRequest):
         return {"status": "success", "message": "Password reset successfully. You can now login with your new password."}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to reset password: {str(e)}")
+    except Exception:
+        logger.exception("Direct password reset failed")
+        raise HTTPException(status_code=500, detail="Failed to reset password.")

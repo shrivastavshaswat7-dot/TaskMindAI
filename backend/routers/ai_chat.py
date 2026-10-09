@@ -3,8 +3,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List
 import json
+import logging
 import google.generativeai as genai
 from config import MODEL_NAMES, is_fallback_error
+
+logger = logging.getLogger(__name__)
+GENERIC_AI_ERROR = "The AI request failed. Please try again."
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -74,15 +78,16 @@ async def chat(request: ChatRequest):
                 yield f"data: {json.dumps({'done': True})}\n\n"
                 return
             except Exception as e:
-                msg = str(e)
+                logger.exception("Gemini chat failed (model %s)", name)
                 # Stream shuru hone ke baad fallback nahi, warna text duplicate hoga
                 if not started and is_fallback_error(e):
                     print(f"[gemini] {name} fail hua, agla model try kar raha hoon")
                     last_error = e
                     continue
-                yield f"data: {json.dumps({'error': msg})}\n\n"
+                yield f"data: {json.dumps({'error': GENERIC_AI_ERROR})}\n\n"
                 return
-        yield f"data: {json.dumps({'error': str(last_error)})}\n\n"
+        logger.error("All Gemini models failed for chat: %s", last_error)
+        yield f"data: {json.dumps({'error': GENERIC_AI_ERROR})}\n\n"
 
     return StreamingResponse(
         generate(),

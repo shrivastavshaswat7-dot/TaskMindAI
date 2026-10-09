@@ -210,5 +210,94 @@ class PasswordResetTest(unittest.TestCase):
         self.assertEqual(fake_supabase.auth.admin.updated, ["user-b"])
 
 
+B = {"Authorization": "Bearer token-b"}
+TASKS_BODY = {"tasks": [{"id": "1", "title": "t", "completed": False}]}
+
+
+class RateLimitTest(unittest.TestCase):
+    def setUp(self):
+        auth_utils._hits.clear()
+        config.gemini_model.generate_content.side_effect = Exception("boom")
+
+    def tearDown(self):
+        config.gemini_model.generate_content.side_effect = None
+        auth_utils._hits.clear()
+
+    def test_ai_endpoints_are_rate_limited_per_user(self):
+        with mock.patch.object(auth_utils, "RATE_LIMIT_PER_MINUTE", 3):
+            statuses = [client.post("/api/tasks/prioritize", headers=A, json=TASKS_BODY).status_code
+                        for _ in range(4)]
+            self.assertNotIn(429, statuses[:3])
+            self.assertEqual(statuses[3], 429)
+            blocked = client.post("/api/tasks/prioritize", headers=A, json=TASKS_BODY)
+            self.assertIn("Retry-After", blocked.headers)
+            # another user is not affected by user A's usage
+            self.assertNotEqual(client.post("/api/tasks/prioritize", headers=B, json=TASKS_BODY).status_code, 429)
+
+    def test_non_ai_routes_are_not_rate_limited(self):
+        with mock.patch.object(auth_utils, "RATE_LIMIT_PER_MINUTE", 1):
+            codes = [client.post("/api/priorities", headers=A, json={"topics": [], "days_left": 3}).status_code
+                     for _ in range(3)]
+        self.assertEqual(codes, [200, 200, 200])
+
+    def test_unauthenticated_requests_do_not_consume_the_limit(self):
+        with mock.patch.object(auth_utils, "RATE_LIMIT_PER_MINUTE", 1):
+            for _ in range(3):
+                self.assertEqual(client.post("/api/tasks/prioritize", json=TASKS_BODY).status_code, 401)
+
+
+class ErrorLeakTest(unittest.TestCase):
+    SECRET = "SECRET-INTERNAL-DETAIL postgres://user:pw@host/db"
+
+    def setUp(self):
+        auth_utils._hits.clear()
+        config.gemini_model.generate_content.side_effect = Exception(self.SECRET)
+
+    def tearDown(self):
+        config.gemini_model.generate_content.side_effect = None
+        auth_utils._hits.clear()
+
+    def assert_generic(self, response, expected_status):
+        self.assertEqual(response.status_code, expected_status)
+        self.assertNotIn("SECRET", response.text)
+        self.assertNotIn("postgres", response.text)
+        self.assertNotIn("Traceback", response.text)
+
+    def test_task_prioritization_failure_is_generic(self):
+        self.assert_generic(client.post("/api/tasks/prioritize", headers=A, json=TASKS_BODY), 500)
+
+    def test_email_drafting_failure_is_generic(self):
+        r = client.post("/api/email/draft-reply", headers=A, json={"original_email": "hello"})
+        self.assert_generic(r, 500)
+
+    def test_pdf_extraction_failure_is_generic(self):
+        r = client.post("/api/extract", headers=A,
+                        files={"files": ("p.pdf", b"%PDF-1.4 test", "application/pdf")})
+        self.assert_generic(r, 502)
+
+
+class CorsTest(unittest.TestCase):
+    def preflight(self, origin):
+        return client.options(
+            "/api/quiz",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+
+    def test_allowed_origin_gets_cors_headers(self):
+        r = self.preflight("http://localhost:5173")
+        self.assertEqual(r.headers.get("access-control-allow-origin"), "http://localhost:5173")
+
+    def test_unknown_origin_gets_no_cors_allowance(self):
+        r = self.preflight("https://evil.example.com")
+        self.assertNotIn("access-control-allow-origin", r.headers)
+
+    def test_wildcard_is_never_allowed(self):
+        self.assertNotIn("*", main.ALLOWED_ORIGINS)
+
+
 if __name__ == "__main__":
     unittest.main()

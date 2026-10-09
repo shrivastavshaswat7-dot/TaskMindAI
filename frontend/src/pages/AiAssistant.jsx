@@ -20,7 +20,7 @@ function renderMarkdown(text) {
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
     .replace(/^# (.+)$/gm, '<h1>$1</h1>')
     // unordered lists
-    .replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
+    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
     .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
     // numbered lists
     .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
@@ -51,7 +51,7 @@ export default function AiAssistant() {
 
   // ── Documents state
   const [documents, setDocuments] = useState([])
-  const [isUploading, setIsUploading] = useState(false)
+  const [, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState('')
   const [docQuestion, setDocQuestion] = useState('')
   const [docAnswer, setDocAnswer] = useState(null)
@@ -129,7 +129,7 @@ export default function AiAssistant() {
                 )
               }
               if (parsed.error) throw new Error(parsed.error)
-            } catch (e) { /* ignore parse errors for partial chunks */ }
+            } catch { /* ignore parse errors for partial chunks */ }
           }
         }
       }
