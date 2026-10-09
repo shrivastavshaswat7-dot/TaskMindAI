@@ -23,7 +23,7 @@ Four different kinds of evidence are used below. They are not equivalent.
 | Database constraints (check, not-null, foreign keys, unique) | **Real**, read-only probes that can only fail (no rows created) |
 | RLS blocks anonymous access | **Real** (anonymous insert -> `42501`, anonymous select -> empty on a 14-row table) |
 | Dashboard, tasks (add), timetable/attendance pages, AI chat, email draft, document list/upload/Q&A | **Mocked E2E** smoke tests only. Never run against real Supabase |
-| Real login with a real account in a real browser | **Not done** (no test account is configured, and email login cannot be automated safely) |
+| Real login with a real account in a real browser | **Not done.** No test account is configured, and I do not create accounts or use real users' credentials. An opt-in test is ready: `frontend/e2e/real-login.spec.js` (skipped by default, never run yet, see "Real-login test" below) |
 | Isolation between two real users | **Not done** (needs two accounts). Runbook below |
 
 ## Architecture
@@ -69,6 +69,17 @@ cd frontend && npm run test:e2e                                    # 19 browser 
 cd frontend && npm run build
 cd frontend && npm run lint                                        # 3 problems remain, all in older code (App.jsx, Auth.jsx effects)
 ```
+
+### Real-login test (opt-in, not yet run)
+
+Create a throw-away test user in Supabase (Authentication -> Users -> Add user, auto-confirm, no MFA). With the normal backend and
+frontend running, from `frontend/`:
+
+```powershell
+$env:E2E_REAL_EMAIL="your-test-user@example.com"; $env:E2E_REAL_PASSWORD="..."; npx playwright test e2e/real-login.spec.js
+```
+It checks real login, session after refresh, an authenticated API call (200), another user's id refused (403), no token refused (401),
+and logout. It only reads data and never prints the credentials or token. Without the two variables it is skipped.
 
 ## Demo script (3-5 minutes)
 
