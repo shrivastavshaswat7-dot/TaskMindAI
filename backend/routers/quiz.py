@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from google.api_core import exceptions as google_exceptions
 import google.generativeai as genai
 
 from config import MODEL_NAMES, is_fallback_error
@@ -21,6 +22,9 @@ quiz_cache = {}       # topic_id -> latest generated questions
 weakness_cache = {}   # topic_id -> weakness score
 
 MAX_TOPIC_NAME_LEN = 100
+
+# Per-call Gemini timeout in SECONDS (google-generativeai RequestOptions).
+GEMINI_TIMEOUT_SECONDS = 20
 
 
 def load_topics():
@@ -71,6 +75,17 @@ def resolve_topic_name(topic_id, payload):
     # "laplace-transform-2" -> "laplace transform"
     readable = re.sub(r"-\d+$", "", topic_id).replace("-", " ").strip()
     return readable[:MAX_TOPIC_NAME_LEN] or topic_id[:MAX_TOPIC_NAME_LEN]
+
+
+def is_transient_error(exc):
+    """Timeouts and 5xx (500/503/504...): worth trying the next model.
+
+    Validation errors, bad requests (4xx) and auth problems are not included.
+    """
+    return isinstance(
+        exc,
+        (google_exceptions.ServerError, TimeoutError),
+    )
 
 
 def to_weakness(value):
@@ -216,6 +231,7 @@ Rules:
                     generation_config={
                         "response_mime_type": "application/json"
                     },
+                    request_options={"timeout": GEMINI_TIMEOUT_SECONDS},
                 )
                 raw_text = response.text
 
@@ -239,7 +255,7 @@ Rules:
             except Exception as exc:
                 last_error = exc
 
-                if is_fallback_error(exc):
+                if is_fallback_error(exc) or is_transient_error(exc):
                     continue
 
                 raise HTTPException(

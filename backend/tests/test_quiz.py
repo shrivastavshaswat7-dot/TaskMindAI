@@ -22,6 +22,7 @@ if "config" not in sys.modules:
     )
     sys.modules["config"] = fake
 
+from google.api_core import exceptions as gexc  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -129,6 +130,59 @@ class QuizGenerateTest(unittest.TestCase):
         junk = json.dumps(bad)
         r = self.post({"topic_id": "t"}, [junk] * 4)
         self.assertEqual(r.status_code, 502)
+
+    def test_504_on_first_model_falls_back_to_next(self):
+        good = json.dumps(make_questions())
+        r = self.post(
+            {"topic_id": "t"},
+            [gexc.DeadlineExceeded("504 Deadline expired"), good],
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.json()["questions"]), 5)
+
+    def test_503_and_timeout_fall_back(self):
+        good = json.dumps(make_questions())
+        for err in (gexc.ServiceUnavailable("503"), TimeoutError("timed out")):
+            r = self.post({"topic_id": "t"}, [err, good])
+            self.assertEqual(r.status_code, 200)
+
+    def test_all_models_time_out_is_502(self):
+        # 2 prompt attempts x 2 configured models
+        errs = [gexc.DeadlineExceeded("504")] * 4
+        r = self.post({"topic_id": "t"}, errs)
+        self.assertEqual(r.status_code, 502)
+
+    def test_timeout_is_passed_to_gemini(self):
+        seen = {}
+
+        class Model:
+            def __init__(self, *a, **k):
+                pass
+
+            def generate_content(self, prompt, **k):
+                seen.update(k)
+                return types.SimpleNamespace(
+                    text=json.dumps(make_questions())
+                )
+
+        with mock.patch.object(quiz.genai, "GenerativeModel", Model):
+            client.post("/api/quiz", json={"topic_id": "t"})
+        self.assertEqual(seen["request_options"], {"timeout": 20})
+
+    def test_permanent_4xx_does_not_try_next_model(self):
+        calls = []
+
+        class Model:
+            def __init__(self, name, **k):
+                calls.append(name)
+
+            def generate_content(self, *a, **k):
+                raise gexc.InvalidArgument("400 bad request")
+
+        with mock.patch.object(quiz.genai, "GenerativeModel", Model):
+            r = client.post("/api/quiz", json={"topic_id": "t"})
+        self.assertEqual(r.status_code, 502)
+        self.assertEqual(len(calls), 1)
 
     def test_non_quota_error_is_502(self):
         r = self.post({"topic_id": "t"}, [Exception("boom")])
