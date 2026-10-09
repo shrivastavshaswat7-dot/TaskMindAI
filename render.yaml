@@ -1,0 +1,46 @@
+# Render Blueprint: backend (FastAPI) + frontend (static site) from this one repo.
+# NOT deployed yet and NOT validated against Render (no account/CLI here). See Docs/DEPLOYMENT.md.
+# Secrets are never stored in this file: `sync: false` makes Render ask for the value in its dashboard.
+services:
+  # ---- Backend API -----------------------------------------------------------------------------
+  - type: web
+    name: taskmindai-api
+    runtime: python
+    plan: free                      # free instances sleep after ~15 min idle (first request is slow); upgrade for demos
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ENV
+        value: production             # hides /docs and /openapi.json
+      - key: AI_RATE_LIMIT_PER_MINUTE
+        value: "30"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY     # server only: never put this in the frontend service
+        sync: false
+      - key: EXTRA_ALLOWED_ORIGINS    # the frontend URL, e.g. https://taskmindai-web.onrender.com (no trailing slash)
+        sync: false
+      # Do NOT add ALLOW_DIRECT_PASSWORD_RESET (insecure, local development only)
+
+  # ---- Frontend (static) -----------------------------------------------------------------------
+  - type: web
+    name: taskmindai-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite                 # SPA fallback: BrowserRouter paths like /priorities must serve index.html
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_PUBLISHABLE_KEY   # the public anon/publishable key only
+        sync: false
+      - key: VITE_API_BASE_URL        # the backend URL, e.g. https://taskmindai-api.onrender.com (no trailing slash)
+        sync: false

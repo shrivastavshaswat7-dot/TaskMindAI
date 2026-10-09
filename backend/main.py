@@ -1,3 +1,5 @@
+import os
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import ALLOWED_ORIGINS
@@ -12,10 +14,19 @@ from routers import priority
 from routers import quiz
 from routers import extract
 
+def docs_settings(app_env=None):
+    """The Swagger/OpenAPI pages list every endpoint publicly, so hide them when APP_ENV=production."""
+    env = (os.getenv("APP_ENV", "") if app_env is None else app_env).strip().lower()
+    if env == "production":
+        return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    return {}
+
+
 app = FastAPI(
     title="TaskMindAI API",
     description="Backend API for TaskMindAI — AI-powered student productivity assistant",
     version="1.0.0",
+    **docs_settings(),
 )
 
 # auth.router stays public (direct password reset is disabled unless explicitly enabled, see routers/auth.py).
