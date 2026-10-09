@@ -18,4 +18,9 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
+  {
+    // Node-side files: browser-test specs/mocks and their config
+    files: ['e2e/**/*.js', 'playwright.config.js'],
+    languageOptions: { globals: globals.node },
+  },
 ])

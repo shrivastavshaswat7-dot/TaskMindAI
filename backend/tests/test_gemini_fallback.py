@@ -104,5 +104,25 @@ class FallbackModelTest(unittest.TestCase):
             fm.generate_content("hi")
 
 
+
+class AllowedOriginsTest(unittest.TestCase):
+    def reload_config(self, value):
+        env = {} if value is None else {"EXTRA_ALLOWED_ORIGINS": value}
+        with mock.patch.dict(os.environ, env, clear=False):
+            if value is None:
+                os.environ.pop("EXTRA_ALLOWED_ORIGINS", None)
+            return load_config()
+
+    def test_defaults_are_local_only(self):
+        cfg = self.reload_config(None)
+        self.assertEqual(cfg.ALLOWED_ORIGINS, ["http://localhost:5173", "http://127.0.0.1:5173"])
+
+    def test_extra_origins_are_added_and_wildcard_is_ignored(self):
+        cfg = self.reload_config("https://app.example.com/, *, ,https://b.example.com")
+        self.assertIn("https://app.example.com", cfg.ALLOWED_ORIGINS)
+        self.assertIn("https://b.example.com", cfg.ALLOWED_ORIGINS)
+        self.assertNotIn("*", cfg.ALLOWED_ORIGINS)
+
+
 if __name__ == "__main__":
     unittest.main()

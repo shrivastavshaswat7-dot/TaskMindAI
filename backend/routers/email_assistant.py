@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -93,10 +94,11 @@ Rules:
 
         return DraftReplyResponse(draft=draft, subject_line=subject_line)
 
-    except Exception as e:
+    except Exception:
+        logging.getLogger(__name__).exception("Email drafting failed")
         raise HTTPException(
             status_code=500,
-            detail=f"Email drafting failed: {str(e)}"
+            detail="Email drafting failed. Please try again."
         )
 
 

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 
+const INSTANT_RESET_ENABLED = import.meta.env.VITE_ENABLE_INSTANT_RESET === 'true'
+
 function Auth({
   setIsLoggedIn,
   setName,
@@ -10,7 +12,9 @@ function Auth({
   onRecoveryComplete,
 }) {
   const [mode, setMode] = useState(initialMode) // 'login' | 'signup' | 'forgot' | 'reset'
-  const [forgotMethod, setForgotMethod] = useState('instant') // 'instant' | 'email'
+  // "Instant Reset" (no email check) is insecure: only shown for local dev when VITE_ENABLE_INSTANT_RESET=true
+  // AND the backend has ALLOW_DIRECT_PASSWORD_RESET=true. Otherwise the emailed reset link is the only method.
+  const [forgotMethod, setForgotMethod] = useState(INSTANT_RESET_ENABLED ? 'instant' : 'email') // 'instant' | 'email'
 
   const [formName, setFormName] = useState('')
   const [formEmail, setFormEmail] = useState('')
@@ -372,8 +376,13 @@ function Auth({
           {mode === 'forgot' && (
             <div className="form-box">
               <h2>Reset password</h2>
-              <p className="subtitle">Choose how you want to reset your password</p>
+              <p className="subtitle">
+                {INSTANT_RESET_ENABLED
+                  ? 'Choose how you want to reset your password'
+                  : 'We will email you a link to reset your password'}
+              </p>
 
+              {INSTANT_RESET_ENABLED && (
               <div className="auth-tabs">
                 <button
                   type="button"
@@ -396,6 +405,7 @@ function Auth({
                   ✉️ Reset via Email
                 </button>
               </div>
+              )}
 
               {forgotMethod === 'instant' ? (
                 <form onSubmit={handleDirectReset}>

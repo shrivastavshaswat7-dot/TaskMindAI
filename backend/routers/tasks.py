@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from config import gemini_model
@@ -95,13 +96,15 @@ Rules:
         result = json.loads(text)
         return PrioritizeResponse(**result)
 
-    except json.JSONDecodeError as e:
+    except json.JSONDecodeError:
+        logging.getLogger(__name__).exception("AI returned invalid JSON for task prioritization")
         raise HTTPException(
             status_code=500,
-            detail=f"AI returned invalid JSON: {str(e)}"
+            detail="The AI returned an unreadable answer. Please try again."
         )
-    except Exception as e:
+    except Exception:
+        logging.getLogger(__name__).exception("Task prioritization failed")
         raise HTTPException(
             status_code=500,
-            detail=f"AI prioritization failed: {str(e)}"
+            detail="AI prioritization failed. Please try again."
         )

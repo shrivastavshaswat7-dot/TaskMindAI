@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import statistics
 from collections import Counter, defaultdict
@@ -233,10 +234,11 @@ async def extract(
             detail="Gemini returned invalid JSON. Try again."
         )
 
-    except Exception as e:
+    except Exception:
+        logging.getLogger(__name__).exception("Gemini extraction failed")
         raise HTTPException(
             status_code=502,
-            detail=f"Gemini error: {e}"
+            detail="The AI service failed to analyze the PDFs. Please try again."
         )
 
     # Kabhi Gemini array ko {"questions": [...]} mein wrap kar deta hai

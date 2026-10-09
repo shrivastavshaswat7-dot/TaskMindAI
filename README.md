@@ -18,6 +18,6 @@ TaskMindAI is designed to help students manage their timetable, attendance, task
 - RAG Document Assistant
 - AI Email Reply Assistant
 
-## Current Status
+## Run it, test it, demo it
 
-Initial project setup completed.
+See [Docs/HACKATHON_DEMO.md](Docs/HACKATHON_DEMO.md) for setup (env templates: `backend/.env.example`, `frontend/.env.example`), test commands, the demo script, known limitations and what has been verified.

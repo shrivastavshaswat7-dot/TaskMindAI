@@ -1,7 +1,8 @@
 // Docs/CONTRACT.md ke endpoints. Pages yahin se call karein, fetch duplicate na karein.
+import { authFetch } from './authFetch'
 
 async function request(url, options) {
-  const res = await fetch(url, options)
+  const res = await authFetch(url, options)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`)
   return data

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { supabase } from '../supabase'
+import { authFetch } from '../api/authFetch'
 
 /* ─── simple markdown renderer ─────────────────────────────────────────── */
 function renderMarkdown(text) {
@@ -19,7 +20,7 @@ function renderMarkdown(text) {
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
     .replace(/^# (.+)$/gm, '<h1>$1</h1>')
     // unordered lists
-    .replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
+    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
     .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
     // numbered lists
     .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
@@ -50,7 +51,7 @@ export default function AiAssistant() {
 
   // ── Documents state
   const [documents, setDocuments] = useState([])
-  const [isUploading, setIsUploading] = useState(false)
+  const [, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState('')
   const [docQuestion, setDocQuestion] = useState('')
   const [docAnswer, setDocAnswer] = useState(null)
@@ -88,7 +89,7 @@ export default function AiAssistant() {
     setMessages(prev => [...prev, { id: assistantMsgId, role: 'model', content: '', streaming: true }])
 
     try {
-      const response = await fetch('/api/ai/chat', {
+      const response = await authFetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -128,7 +129,7 @@ export default function AiAssistant() {
                 )
               }
               if (parsed.error) throw new Error(parsed.error)
-            } catch (e) { /* ignore parse errors for partial chunks */ }
+            } catch { /* ignore parse errors for partial chunks */ }
           }
         }
       }
@@ -166,7 +167,7 @@ export default function AiAssistant() {
   /* ── Document helpers ── */
   const fetchDocuments = async (uid) => {
     try {
-      const res = await fetch(`/api/documents/list/${uid}`)
+      const res = await authFetch(`/api/documents/list/${uid}`)
       const data = await res.json()
       setDocuments(data.documents || [])
     } catch (e) {
@@ -186,7 +187,7 @@ export default function AiAssistant() {
     formData.append('file', file)
 
     try {
-      const res = await fetch('/api/documents/upload', {
+      const res = await authFetch('/api/documents/upload', {
         method: 'POST',
         body: formData,
       })
@@ -215,7 +216,7 @@ export default function AiAssistant() {
   const handleDeleteDoc = async (docId) => {
     if (!userId) return
     try {
-      await fetch('/api/documents/delete', {
+      await authFetch('/api/documents/delete', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ document_id: docId, user_id: userId }),
@@ -234,7 +235,7 @@ export default function AiAssistant() {
     setDocAnswer(null)
 
     try {
-      const res = await fetch('/api/documents/query', {
+      const res = await authFetch('/api/documents/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
