@@ -62,7 +62,7 @@ test('sign up asks for verification and sends the user to the login screen, not 
   expect(await dashboardEverShown(page)).toBe(false)
   expect(await storedSessions(page)).toEqual([])
   expect(mock.signups).toHaveLength(1)
-  expect(mock.signups[0].redirectTo).toMatch(/^http:\/\/localhost:5173\/?$/)           // authRedirectUrl() (local dev)
+  expect(mock.signups[0].redirectTo).toBe(`${new URL(page.url()).origin}/`)                 // authRedirectUrl() (local dev: the page origin)
   expect(mock.consoleErrors).toEqual([])
 })
 
