@@ -61,6 +61,7 @@ export async function installMockBackend(page, options = {}) {
     signupMode: 'confirm',            // 'confirm': needs email verification | 'duplicate': email already registered | 'immediate': confirmation is off
     passwordLogins: 0,                // how many email+password logins reached the (mocked) server
     signups: [],                      // { email, redirectTo } of every sign-up request
+    quizFails: false,                 // true: /api/quiz answers 503 (the app then falls back to sample questions)
     tables: {
       tasks: [], timetable_entries: [], subjects: [], attendance_records: [],
       academic_subjects: [], study_topics: [], ...structuredClone(options.tables || {}),   // a copy: tests must not leak changes into shared seed data
@@ -249,7 +250,10 @@ export async function installMockBackend(page, options = {}) {
         ],
       })
     }
-    if (path === '/api/quiz') return json(route, 200, { questions: QUESTIONS })
+    if (path === '/api/quiz') {
+      if (state.quizFails) return json(route, 503, { detail: 'quiz service unavailable' })
+      return json(route, 200, { questions: QUESTIONS })
+    }
     if (path === '/api/quiz/submit') {
       const { answers, questions, current_weakness: current } = body
       const score = questions.filter((q, i) => answers[i] === q.answer).length
