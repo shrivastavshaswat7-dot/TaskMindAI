@@ -3,31 +3,31 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom'
 
 const STUDY_ROUTES = ['/pyq', '/priorities', '/study-now', '/quiz']
 
-// Same routes and labels as before, grouped for the new sidebar
+// Same routes and labels as before, grouped for the sidebar (the CSS shows the group titles in capitals)
 const NAV_GROUPS = [
   {
     label: 'Workspace',
     items: [
       { to: '/', icon: '⌂', label: 'Dashboard', end: true },
-      { to: '/tasks', icon: '✓', label: 'Tasks' },
-      { to: '/timetable', icon: '▣', label: 'Timetable' },
-      { to: '/attendance', icon: '◉', label: 'Attendance' },
-    ],
-  },
-  {
-    label: 'AI tools',
-    items: [
-      { to: '/ai-assistant', icon: '✦', label: 'AI Assistant' },
-      { to: '/email-assistant', icon: '✉', label: 'Email Assistant' },
-    ],
-  },
-  {
-    label: 'Exam prep',
-    items: [
       { to: '/pyq', icon: '◈', label: 'PYQ Analysis' },
       { to: '/priorities', icon: '▲', label: 'Priorities' },
       { to: '/study-now', icon: '▶', label: 'Study Now' },
       { to: '/quiz', icon: '?', label: 'Quiz' },
+    ],
+  },
+  {
+    label: 'Productivity',
+    items: [
+      { to: '/tasks', icon: '✓', label: 'Tasks' },
+      { to: '/timetable', icon: '▣', label: 'Timetable' },
+    ],
+  },
+  {
+    label: 'Additional tools',
+    items: [
+      { to: '/attendance', icon: '◉', label: 'Attendance' },
+      { to: '/ai-assistant', icon: '✦', label: 'AI Assistant' },
+      { to: '/email-assistant', icon: '✉', label: 'Email Assistant' },
     ],
   },
 ]

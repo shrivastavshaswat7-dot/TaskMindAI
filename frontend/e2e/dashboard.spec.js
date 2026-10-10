@@ -93,7 +93,7 @@ test('the sidebar groups every page and marks the current one', async ({ page })
   await installMockBackend(page)
   await loginThroughUi(page)
   const nav = page.getByRole('navigation')
-  for (const group of ['Workspace', 'AI tools', 'Exam prep']) {
+  for (const group of ['Workspace', 'Productivity', 'Additional tools']) {
     await expect(nav.getByRole('group', { name: group })).toBeVisible()
   }
   for (const name of ['Dashboard', 'Tasks', 'Timetable', 'Attendance', 'AI Assistant', 'Email Assistant', 'PYQ Analysis', 'Priorities', 'Study Now', 'Quiz']) {
@@ -103,6 +103,37 @@ test('the sidebar groups every page and marks the current one', async ({ page })
   await nav.getByRole('link', { name: 'Timetable' }).click()
   await expect(nav.getByRole('link', { name: 'Timetable' })).toHaveClass(/active/)
   await expect(nav.getByRole('link', { name: 'Dashboard' })).not.toHaveClass(/active/)
+})
+
+test('the sidebar shows the groups and pages in the agreed order, and every page keeps its route', async ({ page }) => {
+  await installMockBackend(page)
+  await loginThroughUi(page)
+  const nav = page.getByRole('navigation')
+  const expected = [
+    ['Workspace', [['Dashboard', '/'], ['PYQ Analysis', '/pyq'], ['Priorities', '/priorities'], ['Study Now', '/study-now'], ['Quiz', '/quiz']]],
+    ['Productivity', [['Tasks', '/tasks'], ['Timetable', '/timetable']]],
+    ['Additional tools', [['Attendance', '/attendance'], ['AI Assistant', '/ai-assistant'], ['Email Assistant', '/email-assistant']]],
+  ]
+  const groups = await nav.getByRole('group').all()
+  expect(groups).toHaveLength(expected.length)
+  for (const [i, [title, items]] of expected.entries()) {
+    await expect(groups[i].locator('.nav-group-label')).toHaveText(title)
+    await expect(groups[i].getByRole('link')).toHaveText(items.map(([label]) => new RegExp(`${label}$`)))
+    for (const [label, href] of items) await expect(groups[i].getByRole('link', { name: label })).toHaveAttribute('href', href)
+  }
+})
+
+test('on a short desktop screen the sidebar scrolls so the last items stay reachable', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 420 })
+  await installMockBackend(page)
+  await loginThroughUi(page)
+  const sidebar = page.locator('#app-sidebar')
+  expect(await sidebar.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)   // it really overflows here
+  await expect(page.getByRole('link', { name: 'Email Assistant' })).not.toBeInViewport()
+  await page.getByRole('link', { name: 'Email Assistant' }).scrollIntoViewIfNeeded()
+  await expect(page.getByRole('link', { name: 'Email Assistant' })).toBeInViewport()
+  await page.getByRole('link', { name: 'Email Assistant' }).click()
+  await expect(page).toHaveURL(/\/email-assistant$/)
 })
 
 test.describe('phone-sized screen', () => {
