@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
+import {
+  AUTH_LANDING,
+  VERIFY_LOGIN_WAIT_MS,
+  VERIFICATION,
+  VERIFY_SETTLE_TIMEOUT_MS,
+  clearAuthHash,
+  waitForSettled,
+} from './api/authLanding'
+import { landingNotice } from './api/authMessages'
 import { supabase } from './supabase'
 import Layout from './components/Layout'
 import { apiJson } from './api/authFetch'
@@ -33,6 +42,15 @@ const ACTIVE_SUBJECT_KEY = 'taskmind.activeStudySubject'
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [isRecoveryMode, setIsRecoveryMode] = useState(false)
+  // Message for the login screen after an emailed link ("Email verified, please log in" / "link expired")
+  const [authNotice, setAuthNotice] = useState(() => landingNotice(AUTH_LANDING))
+  // Email-verification link: Supabase starts a session from it. We must NOT treat that as a login, so every auth
+  // event is ignored until the user logs in on purpose (released in markLoggedIn below).
+  const verifyLandingRef = useRef(AUTH_LANDING.kind === 'signup')
+  // True while that temporary session is being ended. The login button stays disabled meanwhile: a login finished
+  // before the pending sign-out settles would have its brand-new session removed by that sign-out.
+  const [verifyingLanding, setVerifyingLanding] = useState(AUTH_LANDING.kind === 'signup')
+  const verificationEndedRef = useRef(null)   // the one in-flight "end the temporary session" promise
 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -236,13 +254,54 @@ function App() {
       setIsRecoveryMode(true)
     }
 
+    // Ends the temporary session that the verification link created. The scope is 'local': Supabase revokes only this
+    // one session (a server call) and clears it from this browser; the user's other sessions are not touched.
+    // It always settles (success or failure), and only then is the login button enabled again.
+    const endVerificationSession = () => {
+      if (!verificationEndedRef.current) {
+        verificationEndedRef.current = (async () => {
+          try {
+            await supabase.auth.signOut({ scope: 'local' })
+          } catch (err) {
+            console.error('Could not end the temporary verification session:', err)
+          } finally {
+            clearAuthHash()
+            setVerifyingLanding(false)
+            VERIFICATION?.resolve()   // lets a waiting login proceed (see waitForVerification)
+          }
+        })()
+      }
+      return verificationEndedRef.current
+    }
+
+    // Even if the sign-out hangs, never leave the login button disabled indefinitely
+    const settleTimer = verifyLandingRef.current
+      ? setTimeout(() => setVerifyingLanding(false), VERIFY_SETTLE_TIMEOUT_MS)
+      : null
+
     const getSession = async () => {
-      const { data, error } = await supabase.auth.getSession()
+      let result
+      try {
+        result = await supabase.auth.getSession()
+      } catch (err) {
+        result = { data: { session: null }, error: err }
+      }
+
+      // getSession() resolves after Supabase has consumed the link, so the temporary session exists now: end it.
+      // This runs before the error check so the "finishing verification" state always ends.
+      if (verifyLandingRef.current) {
+        await endVerificationSession()
+        return
+      }
+
+      const { data, error } = result
 
       if (error) {
         console.error(error)
         return
       }
+
+      if (AUTH_LANDING.kind === 'error') clearAuthHash()   // expired/invalid link: Supabase leaves the hash in place
 
       if (data.session && !window.location.hash.includes('type=recovery')) {
         const user = data.session.user
@@ -260,6 +319,10 @@ function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
+      // Supabase delivers SIGNED_IN for the verification link *after* getSession() resolves, so this guard (not a
+      // timer) is what keeps the dashboard closed until an explicit login.
+      if (verifyLandingRef.current) return
+
       if (event === 'PASSWORD_RECOVERY') {
         setIsRecoveryMode(true)
         setIsLoggedIn(false)
@@ -283,6 +346,7 @@ function App() {
     })
 
     return () => {
+      clearTimeout(settleTimer)
       subscription.unsubscribe()
     }
   }, [])
@@ -625,10 +689,26 @@ function App() {
     clearUserData()
   }
 
+  // Auth awaits this before it signs in: resolves at once normally, and while a verification sign-out is still pending it
+  // waits for it (at most VERIFY_LOGIN_WAIT_MS, so a sign-out that never answers cannot block a login forever)
+  const waitForVerification = () => waitForSettled(VERIFICATION?.promise, VERIFY_LOGIN_WAIT_MS)
+
+  // Auth calls this after a successful explicit login: only now may auth events open the dashboard again
+  const markLoggedIn = (value) => {
+    if (value) {
+      verifyLandingRef.current = false
+      setAuthNotice(null)
+    }
+    setIsLoggedIn(value)
+  }
+
   if (!isLoggedIn || isRecoveryMode) {
     return (
       <Auth
-        setIsLoggedIn={setIsLoggedIn}
+        setIsLoggedIn={markLoggedIn}
+        initialNotice={authNotice}
+        loginBusy={verifyingLanding}
+        waitForVerification={waitForVerification}
         setName={setName}
         setEmail={setEmail}
         loadData={loadAllData}

@@ -46,6 +46,7 @@ the repo's `render.yaml` Blueprint creates both the backend (Python web service)
 | `VITE_SUPABASE_URL` | yes | Same project URL |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | yes | The public anon/publishable key. **Never the service-role key** |
 | `VITE_API_BASE_URL` | yes | The backend URL, e.g. `https://taskmindai-api.onrender.com` (no trailing slash) |
+| `VITE_SITE_URL` | recommended | The public site address (e.g. `https://taskmindai-iota.vercel.app`). Used as the redirect for password-reset and sign-up emails, so Vercel preview URLs cannot break the link. Leave unset locally |
 | `VITE_ENABLE_INSTANT_RESET` | **never set** | Shows the insecure reset tab |
 
 ## Steps
@@ -58,8 +59,9 @@ the repo's `render.yaml` Blueprint creates both the backend (Python web service)
    Redeploy **both**: the backend to pick up CORS, the frontend because Vite embeds `VITE_*` values at build time.
    If `EXTRA_ALLOWED_ORIGINS` is missing in production the backend logs a `[config] WARNING` at startup and the browser
    shows CORS errors; a `VITE_API_BASE_URL` without `https://` is corrected automatically.
-3. **Supabase dashboard -> Authentication -> URL Configuration:** set *Site URL* to the frontend address and add it (with `/**`)
-   to *Redirect URLs*; configure SMTP so reset emails are sent. Without this the password-reset link goes to the wrong place.
+3. **Supabase dashboard -> Authentication -> URL Configuration:** set *Site URL* to the frontend address (NOT localhost: Supabase falls
+   back to it whenever a redirect is not allow-listed) and add `https://<frontend>/**` plus `http://localhost:5173/**` (local dev) to
+   *Redirect URLs*. Reset links already sent keep their old address, so request a new one after changing this; configure SMTP so reset emails are sent. Without this the password-reset link goes to the wrong place.
 4. **Check the deployment** (replace the hosts):
    ```bash
    curl https://<api>/api/health                                   # 200

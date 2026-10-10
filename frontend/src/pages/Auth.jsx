@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { authRedirectUrl } from '../api/siteUrl'
+import { describeAuthError, SIGNUP_NEUTRAL_MESSAGE } from '../api/authMessages'
 
 const INSTANT_RESET_ENABLED = import.meta.env.VITE_ENABLE_INSTANT_RESET === 'true'
 
@@ -9,6 +11,9 @@ function Auth({
   setEmail,
   loadData,
   initialMode = 'login',
+  initialNotice = null,
+  loginBusy = false,   // true while the temporary verification session is still being ended
+  waitForVerification = async () => {},   // resolves once any pending verification sign-out has settled
   onRecoveryComplete,
 }) {
   const [mode, setMode] = useState(initialMode) // 'login' | 'signup' | 'forgot' | 'reset'
@@ -22,7 +27,7 @@ function Auth({
   const [confirmPassword, setConfirmPassword] = useState('')
 
   const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState(null) // { text: '', type: 'error' | 'success' | 'info' }
+  const [message, setMessage] = useState(initialNotice) // { text: '', type: 'error' | 'success' | 'info' }
 
   useEffect(() => {
     if (initialMode) {
@@ -32,8 +37,12 @@ function Auth({
 
   const handleLogin = async (e) => {
     e.preventDefault()
+    if (loginBusy) return   // never log in while the temporary verification sign-out is still pending
     setLoading(true)
     setMessage(null)
+
+    // Sign in only after a pending verification sign-out has settled: it would otherwise remove this new session
+    await waitForVerification()
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email: formEmail.trim(),
@@ -41,7 +50,7 @@ function Auth({
     })
 
     if (error) {
-      setMessage({ text: error.message, type: 'error' })
+      setMessage({ text: describeAuthError(error), type: 'error' })
     } else {
       const user = data.user
       setName(user?.user_metadata?.name || '')
@@ -74,12 +83,12 @@ function Auth({
       password,
       options: {
         data: { name: formName.trim() },
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: authRedirectUrl(),
       },
     })
 
     if (error) {
-      setMessage({ text: error.message, type: 'error' })
+      setMessage({ text: describeAuthError(error), type: 'error' })
     } else if (data.session) {
       setName(formName.trim())
       setEmail(formEmail.trim())
@@ -88,10 +97,13 @@ function Auth({
         await loadData(data.user.id)
       }
     } else {
-      setMessage({
-        text: 'Account created! Please check your email inbox to verify your account.',
-        type: 'success',
-      })
+      // Email verification is required: no session yet. Supabase answers the same way for a new address and for one
+      // that already has an account (so nobody can probe which emails are registered); keep our message just as
+      // neutral. Send the user to the login screen with clear next steps.
+      setPassword('')
+      setConfirmPassword('')
+      setMode('login')
+      setMessage({ text: SIGNUP_NEUTRAL_MESSAGE(formEmail.trim()), type: 'success' })
     }
 
     setLoading(false)
@@ -108,7 +120,7 @@ function Auth({
     setMessage(null)
 
     const { error } = await supabase.auth.resetPasswordForEmail(formEmail.trim(), {
-      redirectTo: `${window.location.origin}/`,
+      redirectTo: authRedirectUrl(),
     })
 
     if (error) {
@@ -278,8 +290,8 @@ function Auth({
                 </button>
               </div>
 
-              <button className="primary-btn" type="submit" disabled={loading}>
-                {loading ? 'Logging in...' : 'Login'}
+              <button className="primary-btn" type="submit" disabled={loading || loginBusy}>
+                {loginBusy ? 'Finishing verification…' : loading ? 'Logging in...' : 'Login'}
               </button>
 
               {message && (

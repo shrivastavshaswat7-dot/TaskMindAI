@@ -56,7 +56,11 @@ export async function installMockBackend(page, options = {}) {
     chatMode: 'ok',                   // 'ok' | 'error-event' | 'empty' | 'partial-then-error'
     extractMode: 'ok',                // 'ok' | 'fail' (server error, 502) | 'abort' (network failure: "Failed to fetch")
     extractDelayMs: 0,                // makes /api/extract slow, to see the in-progress state
-    loginError: false,
+    loginError: false,                // true: wrong email or password
+    loginErrorCode: null,             // 'email_not_confirmed' | 'invalid_credentials' (real GoTrue error shapes)
+    signupMode: 'confirm',            // 'confirm': needs email verification | 'duplicate': email already registered | 'immediate': confirmation is off
+    passwordLogins: 0,                // how many email+password logins reached the (mocked) server
+    signups: [],                      // { email, redirectTo } of every sign-up request
     tables: {
       tasks: [], timetable_entries: [], subjects: [], attendance_records: [],
       academic_subjects: [], study_topics: [], ...structuredClone(options.tables || {}),   // a copy: tests must not leak changes into shared seed data
@@ -97,7 +101,13 @@ export async function installMockBackend(page, options = {}) {
     if (url.pathname.endsWith('/token')) {
       const grant = url.searchParams.get('grant_type')
       if (grant === 'password') {
-        if (state.loginError) return json(route, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials' })
+        state.passwordLogins += 1
+        if (state.loginErrorCode === 'email_not_confirmed') {
+          return json(route, 400, { code: 400, error_code: 'email_not_confirmed', msg: 'Email not confirmed' })
+        }
+        if (state.loginError || state.loginErrorCode === 'invalid_credentials') {
+          return json(route, 400, { code: 400, error_code: 'invalid_credentials', msg: 'Invalid login credentials' })
+        }
         return json(route, 200, session())
       }
       if (grant === 'refresh_token') {
@@ -106,6 +116,18 @@ export async function installMockBackend(page, options = {}) {
         state.token = `mock-access-token-${state.refreshCount + 1}`
         return json(route, 200, session())
       }
+    }
+    if (url.pathname.endsWith('/signup')) {
+      const body = req.postDataJSON()
+      state.signups.push({ email: body.email, redirectTo: url.searchParams.get('redirect_to') })
+      if (state.signupMode === 'immediate') return json(route, 200, session())          // confirmation off: session right away
+      const user = {
+        id: '22222222-2222-4222-8222-222222222222', aud: 'authenticated', role: '', email: body.email,
+        user_metadata: body.data || {}, app_metadata: {}, created_at: '2026-01-01T00:00:00Z',
+        // Supabase's answer for an already registered email has NO identities (and no error)
+        identities: state.signupMode === 'duplicate' ? [] : [{ id: 'identity-1', provider: 'email' }],
+      }
+      return json(route, 200, user)                                                          // no session: verification needed
     }
     if (url.pathname.endsWith('/user')) return json(route, 200, session().user)
     if (url.pathname.endsWith('/logout')) return route.fulfill({ status: 204, headers: CORS })

@@ -25,7 +25,7 @@ test('wrong credentials show an error and stay on the login screen', async ({ pa
   const mock = await installMockBackend(page)
   mock.loginError = true
   await loginThroughUi(page)
-  await expect(page.getByText(/Invalid login credentials/i)).toBeVisible()
+  await expect(page.getByText('Incorrect email or password.')).toBeVisible()
   await expect(loginForm(page)).toBeVisible()
 })
 
