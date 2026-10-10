@@ -17,6 +17,7 @@ import Priorities from './pages/Priorities'
 import StudyNow from './pages/StudyNow'
 import Quiz from './pages/Quiz'
 import './App.css'
+import './theme.css'
 
 const NO_TOPICS = []
 const ACTIVE_SUBJECT_KEY = 'taskmind.activeStudySubject'
