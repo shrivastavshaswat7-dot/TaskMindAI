@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { authRedirectUrl } from '../api/siteUrl'
 
 const INSTANT_RESET_ENABLED = import.meta.env.VITE_ENABLE_INSTANT_RESET === 'true'
 
@@ -74,7 +75,7 @@ function Auth({
       password,
       options: {
         data: { name: formName.trim() },
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: authRedirectUrl(),
       },
     })
 
@@ -108,7 +109,7 @@ function Auth({
     setMessage(null)
 
     const { error } = await supabase.auth.resetPasswordForEmail(formEmail.trim(), {
-      redirectTo: `${window.location.origin}/`,
+      redirectTo: authRedirectUrl(),
     })
 
     if (error) {
