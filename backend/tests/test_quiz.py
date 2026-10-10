@@ -115,8 +115,8 @@ class QuizGenerateTest(unittest.TestCase):
 
     def test_invalid_then_valid_retries(self):
         good = json.dumps(make_questions())
-        # attempt 1: both models give junk; attempt 2: first model is good
-        r = self.post({"topic_id": "t"}, ["not json", "not json", good])
+        # the first model gives junk, the next one is asked again and is good
+        r = self.post({"topic_id": "t"}, ["not json", good])
         self.assertEqual(r.status_code, 200)
 
     def test_quota_error_falls_back_to_next_model(self):
@@ -146,11 +146,11 @@ class QuizGenerateTest(unittest.TestCase):
             r = self.post({"topic_id": "t"}, [err, good])
             self.assertEqual(r.status_code, 200)
 
-    def test_all_models_time_out_is_502(self):
-        # 2 prompt attempts x 2 configured models
-        errs = [gexc.DeadlineExceeded("504")] * 4
+    def test_all_models_time_out_is_504_with_a_readable_message(self):
+        errs = [gexc.DeadlineExceeded("504")] * 2     # one call per configured model, no second round
         r = self.post({"topic_id": "t"}, errs)
-        self.assertEqual(r.status_code, 502)
+        self.assertEqual(r.status_code, 504)
+        self.assertIn("too long", r.json()["detail"])
 
     def test_timeout_is_passed_to_gemini(self):
         seen = {}
@@ -167,7 +167,7 @@ class QuizGenerateTest(unittest.TestCase):
 
         with mock.patch.object(quiz.genai, "GenerativeModel", Model):
             client.post("/api/quiz", json={"topic_id": "t"})
-        self.assertEqual(seen["request_options"], {"timeout": 20})
+        self.assertEqual(seen["request_options"], {"timeout": quiz.GEMINI_TIMEOUT_SECONDS})
 
     def test_permanent_4xx_does_not_try_next_model(self):
         calls = []
@@ -187,6 +187,70 @@ class QuizGenerateTest(unittest.TestCase):
     def test_non_quota_error_is_502(self):
         r = self.post({"topic_id": "t"}, [Exception("boom")])
         self.assertEqual(r.status_code, 502)
+
+    def test_quota_on_every_model_is_503_busy(self):
+        r = self.post({"topic_id": "t"}, [Exception("429 quota"), Exception("429 quota")])
+        self.assertEqual(r.status_code, 503)
+        self.assertIn("busy", r.json()["detail"])
+
+    def test_invalid_or_missing_api_key_is_503_not_configured_and_stops_at_once(self):
+        for err in (gexc.PermissionDenied("403 forbidden"), gexc.InvalidArgument("400 API key not valid. Please pass a valid API key.")):
+            calls = []
+
+            class Model:
+                def __init__(self, name, **k):
+                    calls.append(name)
+
+                def generate_content(self, *a, **k):
+                    raise err
+
+            with mock.patch.object(quiz.genai, "GenerativeModel", Model):
+                r = client.post("/api/quiz", json={"topic_id": "t"})
+            self.assertEqual(r.status_code, 503)
+            self.assertIn("not configured", r.json()["detail"])
+            self.assertEqual(len(calls), 1)                      # no point asking every other model
+
+    def test_error_detail_never_contains_provider_text_or_secrets(self):
+        r = self.post({"topic_id": "t"}, [gexc.PermissionDenied("403 key=SECRET-VALUE-123")])
+        self.assertNotIn("SECRET-VALUE-123", r.text)
+
+    def test_invalid_answers_from_every_model_is_502(self):
+        r = self.post({"topic_id": "t"}, ["not json", json.dumps(make_questions(3))])
+        self.assertEqual(r.status_code, 502)
+        self.assertIn("5 valid", r.json()["detail"])
+
+    def test_number_of_gemini_calls_is_capped_however_many_models_exist(self):
+        calls = []
+
+        class Model:
+            def __init__(self, name, **k):
+                calls.append(name)
+
+            def generate_content(self, *a, **k):
+                raise gexc.ServiceUnavailable("503")
+
+        many = [f"m{i}" for i in range(10)]
+        with mock.patch.object(quiz, "MODEL_NAMES", many), mock.patch.object(quiz.genai, "GenerativeModel", Model):
+            r = client.post("/api/quiz", json={"topic_id": "t"})
+        self.assertEqual(r.status_code, 504)
+        self.assertEqual(len(calls), quiz.MAX_MODEL_ATTEMPTS)
+
+    def test_total_deadline_stops_further_attempts(self):
+        calls = []
+
+        class Model:
+            def __init__(self, name, **k):
+                calls.append(name)
+
+            def generate_content(self, *a, **k):
+                raise gexc.DeadlineExceeded("504")
+
+        # every call "takes" the whole budget: the clock jumps past the deadline after the first call
+        ticks = iter([0, 0, 1000, 1000, 1000, 1000])
+        with mock.patch.object(quiz, "time", types.SimpleNamespace(monotonic=lambda: next(ticks))), mock.patch.object(quiz.genai, "GenerativeModel", Model):
+            r = client.post("/api/quiz", json={"topic_id": "t"})
+        self.assertEqual(r.status_code, 504)
+        self.assertEqual(len(calls), 1)
 
     def test_missing_topic_id_is_400(self):
         r = client.post("/api/quiz", json={})

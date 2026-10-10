@@ -114,9 +114,12 @@ test('a sample-mode quiz never saves weakness or re-ranks real priorities', asyn
   const rankingBefore = await page.locator('.priority-table tbody tr').allInnerTexts()
   const weaknessBefore = topicRows(mock).map((r) => [r.topic_key, r.weakness])
 
-  mock.quizFails = true                               // the quiz service is down: the app falls back to sample questions
+  mock.quizFails = true                               // the quiz service is down: the app says so, and sample practice is an explicit choice
   await goto(page, /Quiz/)
   await page.getByRole('button', { name: /Start Quiz/ }).click()
+  await expect(page.getByRole('alert')).toContainText('Could not start the quiz')
+  await expect(page.getByText('Sample mode')).toHaveCount(0)               // nothing silently replaced the real quiz
+  await page.getByRole('button', { name: /Practice with sample questions/ }).click()
   await expect(page.getByText('Sample mode')).toBeVisible()
   for (let i = 0; i < 4; i++) {
     await page.locator('.quiz-option').first().click()

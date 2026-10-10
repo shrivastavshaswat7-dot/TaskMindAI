@@ -1,6 +1,8 @@
 import json
+import logging
 import math
 import re
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -24,7 +26,13 @@ weakness_cache = {}   # topic_id -> weakness score
 MAX_TOPIC_NAME_LEN = 100
 
 # Per-call Gemini timeout in SECONDS (google-generativeai RequestOptions).
-GEMINI_TIMEOUT_SECONDS = 20
+GEMINI_TIMEOUT_SECONDS = 15
+# The whole /api/quiz request gets at most this long (seconds), and at most this many Gemini calls, however many
+# models are configured. (It used to be 2 prompts x every model x 20 s = minutes, which the browser gave up on.)
+QUIZ_DEADLINE_SECONDS = 45
+MAX_MODEL_ATTEMPTS = 4
+
+logger = logging.getLogger("taskmind.quiz")
 
 
 def load_topics():
@@ -166,6 +174,34 @@ def validate_questions(data):
     return valid
 
 
+MSG_NOT_CONFIGURED = "The AI quiz service is not configured correctly on the server. Please tell the site owner."
+MSG_BUSY = "The AI service is busy right now (usage limit reached). Please try again in a minute."
+MSG_SLOW = "The AI service took too long to answer. Please try again."
+RETRY_HINT = (
+    "\n\nYour previous response was invalid or incomplete. "
+    "Try again and return exactly 5 valid questions in the required JSON format."
+)
+
+
+def classify_provider_error(exc):
+    """'config' (key missing/invalid/no permission), 'busy' (quota, rate limit, model not found),
+    'timeout' (timeout or 5xx) or 'other' (anything else, not worth retrying)."""
+    text = str(exc)
+    name = type(exc).__name__
+    if (
+        isinstance(exc, (google_exceptions.PermissionDenied, google_exceptions.Unauthenticated))
+        or name == "DefaultCredentialsError"
+        or "api key" in text.lower()
+        or "API_KEY" in text
+    ):
+        return "config"
+    if is_transient_error(exc):
+        return "timeout"
+    if is_fallback_error(exc):
+        return "busy"
+    return "other"
+
+
 def generate_questions(topic_name):
     """Generate exactly five valid questions using Gemini."""
     prompt = f"""
@@ -206,76 +242,69 @@ Rules:
 - Do not include Markdown fences or explanations outside JSON.
 """
 
-    last_error = None
-
     if not MODEL_NAMES:
-        raise HTTPException(
-            status_code=502,
-            detail="No Gemini models are configured.",
-        )
+        raise HTTPException(status_code=503, detail=MSG_NOT_CONFIGURED)
 
-    # Up to two prompt attempts.
-    for json_attempt in range(2):
-        for model_name in MODEL_NAMES:
-            try:
-                model = genai.GenerativeModel(
-                    model_name,
-                    system_instruction=(
-                        "Generate accurate educational MCQs. "
-                        "Follow the requested JSON schema exactly."
-                    ),
-                )
+    deadline = time.monotonic() + QUIZ_DEADLINE_SECONDS
+    models = list(MODEL_NAMES)[:MAX_MODEL_ATTEMPTS]
+    outcomes = []          # what went wrong, per attempt: "invalid" | "busy" | "timeout"
 
-                response = model.generate_content(
-                    prompt,
-                    generation_config={
-                        "response_mime_type": "application/json"
-                    },
-                    request_options={"timeout": GEMINI_TIMEOUT_SECONDS},
-                )
-                raw_text = response.text
+    for model_name in models:
+        remaining = deadline - time.monotonic()
+        if remaining < 3:
+            break
 
-                data = parse_json_response(raw_text)
-                questions = validate_questions(data)
-
-                # Never cache or return an incomplete quiz.
-                if len(questions) == 5:
-                    return questions
-
-                last_error = ValueError(
-                    "Expected 5 valid questions, "
-                    f"but received {len(questions)}."
-                )
-
-            except ValueError as exc:
-                # Bad JSON, empty/blocked response (response.text raises
-                # ValueError): try the next model / retry.
-                last_error = exc
-
-            except Exception as exc:
-                last_error = exc
-
-                if is_fallback_error(exc) or is_transient_error(exc):
-                    continue
-
-                raise HTTPException(
-                    status_code=502,
-                    detail="Gemini question generation failed.",
-                ) from exc
-
-        if json_attempt == 0:
-            prompt += (
-                "\n\nYour previous response was invalid or incomplete. "
-                "Try again and return exactly 5 valid questions "
-                "in the required JSON format."
+        try:
+            model = genai.GenerativeModel(
+                model_name,
+                system_instruction=(
+                    "Generate accurate educational MCQs. "
+                    "Follow the requested JSON schema exactly."
+                ),
             )
 
+            response = model.generate_content(
+                prompt,
+                generation_config={"response_mime_type": "application/json"},
+                request_options={
+                    "timeout": min(GEMINI_TIMEOUT_SECONDS, remaining)
+                },
+            )
+            data = parse_json_response(response.text)
+            questions = validate_questions(data)
+
+            # Never cache or return an incomplete quiz.
+            if len(questions) == 5:
+                return questions
+
+            outcomes.append("invalid")
+            logger.warning("quiz: %s returned %d valid questions", model_name, len(questions))
+            prompt += RETRY_HINT
+
+        except ValueError as exc:
+            # Bad JSON, empty/blocked response (response.text raises ValueError)
+            outcomes.append("invalid")
+            logger.warning("quiz: %s gave an unusable response (%s)", model_name, type(exc).__name__)
+            prompt += RETRY_HINT
+
+        except Exception as exc:
+            kind = classify_provider_error(exc)
+            logger.warning("quiz: %s failed (%s, %s)", model_name, type(exc).__name__, kind)
+
+            if kind == "config":
+                # Wrong/missing key or no permission: every other model fails the same way
+                raise HTTPException(status_code=503, detail=MSG_NOT_CONFIGURED) from exc
+            if kind == "other":
+                raise HTTPException(status_code=502, detail="Gemini question generation failed.") from exc
+            outcomes.append(kind)           # "busy" (quota/429/404) or "timeout" (5xx/timeouts): try the next model
+
+    if outcomes and all(o == "busy" for o in outcomes):
+        raise HTTPException(status_code=503, detail=MSG_BUSY)
+    if outcomes and all(o in ("busy", "timeout") for o in outcomes):
+        raise HTTPException(status_code=504, detail=MSG_SLOW)
     raise HTTPException(
         status_code=502,
-        detail=(
-            "Could not generate exactly 5 valid quiz questions. "
-            "Please try again."
-        ),
+        detail="Could not generate exactly 5 valid quiz questions. Please try again.",
     )
 
 

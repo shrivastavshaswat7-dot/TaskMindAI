@@ -61,7 +61,8 @@ export async function installMockBackend(page, options = {}) {
     signupMode: 'confirm',            // 'confirm': needs email verification | 'duplicate': email already registered | 'immediate': confirmation is off
     passwordLogins: 0,                // how many email+password logins reached the (mocked) server
     signups: [],                      // { email, redirectTo } of every sign-up request
-    quizFails: false,                 // true: /api/quiz answers 503 (the app then falls back to sample questions)
+    quizFails: false,                 // true: /api/quiz answers 503; a number answers that status (with a readable detail)
+    quizBody: null,                   // an object: /api/quiz answers 200 with exactly this body (e.g. invalid questions)
     tables: {
       tasks: [], timetable_entries: [], subjects: [], attendance_records: [],
       academic_subjects: [], study_topics: [], ...structuredClone(options.tables || {}),   // a copy: tests must not leak changes into shared seed data
@@ -251,7 +252,11 @@ export async function installMockBackend(page, options = {}) {
       })
     }
     if (path === '/api/quiz') {
-      if (state.quizFails) return json(route, 503, { detail: 'quiz service unavailable' })
+      if (state.quizFails) {
+        const status = state.quizFails === true ? 503 : state.quizFails
+        return json(route, status, { detail: status === 503 ? 'The AI service is busy right now (usage limit reached). Please try again in a minute.' : 'The AI service took too long to answer. Please try again.' })
+      }
+      if (state.quizBody) return json(route, 200, state.quizBody)
       return json(route, 200, { questions: QUESTIONS })
     }
     if (path === '/api/quiz/submit') {

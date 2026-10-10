@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import { getPriorities, getQuiz, submitQuiz } from '../api/study'
 import { mockQuestions, mockSubmit } from '../api/quizMock'
+import { userMessage } from '../api/errors'
 
 const isValidQuestion = (q) =>
   q && typeof q.q === 'string' && Array.isArray(q.options) && q.options.length > 0
@@ -32,33 +33,42 @@ function Quiz() {
 
   const topic = topics.find((t) => t.id === topicId)
 
-  const startQuiz = async () => {
-    if (!topic) return
-    setIsLoading(true)
-    setError('')
-    setNotice('')
-
-    let loaded = []
-    try {
-      const data = await getQuiz(topic.id, topic.name)
-      loaded = (data.questions || []).filter(isValidQuestion)
-    } catch {
-      // Backend na ho toh bhi page chale; neeche mock use hoga
-    }
-
-    const useMock = loaded.length === 0
-    if (useMock) {
-      loaded = mockQuestions(topic.name)
-      setNotice('Sample questions — the quiz backend is not connected yet.')
-    }
-
+  const beginQuestions = (loaded, useMock) => {
     setIsMock(useMock)
     setQuestions(loaded)
     setAnswers(new Array(loaded.length).fill(null))
     setCurrent(0)
     setResult(null)
     setPhase('question')
-    setIsLoading(false)
+  }
+
+  // A real quiz from the AI service. If that fails the user sees why and can retry; sample questions are only ever
+  // started by an explicit choice (startSample), never silently.
+  const startQuiz = async () => {
+    if (!topic || isLoading) return
+    setIsLoading(true)
+    setError('')
+    setNotice('')
+    try {
+      const data = await getQuiz(topic.id, topic.name)
+      const loaded = (data?.questions || []).filter(isValidQuestion)
+      if (loaded.length === 0) {
+        setError('The quiz service answered, but without usable questions. Please try again.')
+      } else {
+        beginQuestions(loaded, false)
+      }
+    } catch (err) {
+      setError(userMessage(err))
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const startSample = () => {
+    if (!topic) return
+    setError('')
+    setNotice('Sample questions: practice only. Your result will not be saved and your priorities will not change.')
+    beginQuestions(mockQuestions(topic.name), true)
   }
 
   const chooseOption = (option) => {
@@ -168,7 +178,7 @@ function Quiz() {
           <div className="add-task-form study-form">
             <select
               value={topicId}
-              onChange={(e) => setTopicId(e.target.value)}
+              onChange={(e) => { setTopicId(e.target.value); setError('') }}
               className="priority-select quiz-topic-select"
             >
               {topics.map((t) => (
@@ -178,9 +188,25 @@ function Quiz() {
               ))}
             </select>
             <button className="primary-btn" onClick={startQuiz} disabled={isLoading || !topic}>
-              {isLoading ? 'Loading quiz...' : 'Start Quiz →'}
+              {isLoading ? 'Generating quiz...' : 'Start Quiz →'}
             </button>
           </div>
+          {error && (
+            <div className="doc-answer-error" role="alert" style={{ marginTop: '16px' }}>
+              <p style={{ margin: 0 }}>❌ Could not start the quiz. {error}</p>
+              <div className="quiz-actions" style={{ marginTop: '12px' }}>
+                <button className="primary-btn" onClick={startQuiz} disabled={isLoading}>
+                  Retry
+                </button>
+                <button className="ghost-btn" onClick={startSample} disabled={isLoading}>
+                  Practice with sample questions instead
+                </button>
+              </div>
+              <p className="doc-filter-note" style={{ marginBottom: 0 }}>
+                Sample questions are generic practice only: your score is not saved and your priorities do not change.
+              </p>
+            </div>
+          )}
         </section>
       </>
     )
@@ -287,8 +313,8 @@ function Quiz() {
 
         {isMock && (
           <p className="doc-filter-note">
-            These were built-in sample questions because the quiz service could not be reached. Your score was not
-            saved and your priorities were not changed. Try again in a moment for a real quiz.
+            These were built-in sample questions, not a quiz about your topic. Your score was not saved and your
+            priorities were not changed. Start a real quiz from the topic screen to update your weakness.
           </p>
         )}
 
