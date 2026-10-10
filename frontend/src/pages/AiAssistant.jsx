@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { supabase } from '../supabase'
-import { authFetch } from '../api/authFetch'
+import { apiJson, authFetch } from '../api/authFetch'
+import { errorFromResponse, userMessage } from '../api/errors'
+import { createSseParser } from '../api/sse'
 
 /* ─── simple markdown renderer ─────────────────────────────────────────── */
 function renderMarkdown(text) {
@@ -37,6 +39,9 @@ const QUICK_PROMPTS = [
   { icon: '🔬', text: 'Explain photosynthesis step by step' },
 ]
 
+// Message ids only need to be unique within the chat
+const newMessageId = () => Date.now()
+
 /* ─── AI ASSISTANT PAGE ─────────────────────────────────────────────────── */
 export default function AiAssistant() {
   const { name } = useOutletContext()
@@ -51,7 +56,8 @@ export default function AiAssistant() {
 
   // ── Documents state
   const [documents, setDocuments] = useState([])
-  const [, setIsUploading] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
+  const [docsError, setDocsError] = useState('')
   const [uploadProgress, setUploadProgress] = useState('')
   const [docQuestion, setDocQuestion] = useState('')
   const [docAnswer, setDocAnswer] = useState(null)
@@ -64,30 +70,22 @@ export default function AiAssistant() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data?.user) {
-        setUserId(data.user.id)
-        fetchDocuments(data.user.id)
-      }
-    })
-  }, [])
-
   /* ── Chat helpers ── */
   const buildHistory = (msgs) =>
     msgs.map(m => ({ role: m.role, content: m.content }))
 
   const sendMessage = async (text) => {
     if (!text.trim() || isLoading) return
-    const userMsg = { id: Date.now(), role: 'user', content: text }
+    const userMsg = { id: newMessageId(), role: 'user', content: text }
     const nextMessages = [...messages, userMsg]
     setMessages(nextMessages)
     setInput('')
     setIsLoading(true)
 
-    const assistantMsgId = Date.now() + 1
+    const assistantMsgId = newMessageId() + 1
     setMessages(prev => [...prev, { id: assistantMsgId, role: 'model', content: '', streaming: true }])
 
+    let fullText = ''
     try {
       const response = await authFetch('/api/ai/chat', {
         method: 'POST',
@@ -98,41 +96,36 @@ export default function AiAssistant() {
         }),
       })
 
-      if (!response.ok) throw new Error('Chat request failed')
-      if (!response.body) throw new Error('No response body')
+      if (!response.ok) throw await errorFromResponse(response)
+      if (!response.body) throw new Error('The assistant sent no answer. Please try again.')
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
-      let fullText = ''
+      const parser = createSseParser()
+
+      // An error event from the server must reach the user (it is thrown to the catch below, not swallowed)
+      const handleEvents = (events) => {
+        for (const event of events) {
+          if (event.error) throw new Error(event.error)
+          if (event.chunk) {
+            fullText += event.chunk
+            const snapshot = fullText
+            setMessages(prev =>
+              prev.map(m => (m.id === assistantMsgId ? { ...m, content: snapshot } : m))
+            )
+          }
+        }
+      }
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const text = decoder.decode(value)
-        const lines = text.split('\n')
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim()
-            if (!data) continue
-            try {
-              const parsed = JSON.parse(data)
-              if (parsed.done) break
-              if (parsed.chunk) {
-                fullText += parsed.chunk
-                setMessages(prev =>
-                  prev.map(m =>
-                    m.id === assistantMsgId
-                      ? { ...m, content: fullText }
-                      : m
-                  )
-                )
-              }
-              if (parsed.error) throw new Error(parsed.error)
-            } catch { /* ignore parse errors for partial chunks */ }
-          }
-        }
+        handleEvents(parser.push(decoder.decode(value, { stream: true })))
       }
+      handleEvents(parser.push(decoder.decode()))
+      handleEvents(parser.flush())
+
+      if (!fullText) throw new Error('The assistant returned an empty answer. Please try again.')
 
       setMessages(prev =>
         prev.map(m =>
@@ -140,10 +133,17 @@ export default function AiAssistant() {
         )
       )
     } catch (err) {
+      const reason = userMessage(err)
       setMessages(prev =>
         prev.map(m =>
           m.id === assistantMsgId
-            ? { ...m, content: `⚠️ Sorry, something went wrong: ${err.message}`, streaming: false }
+            ? {
+                ...m,
+                content: fullText
+                  ? `${fullText}\n\n⚠️ The answer was cut off: ${reason}`
+                  : `⚠️ Sorry, something went wrong: ${reason}`,
+                streaming: false,
+              }
             : m
         )
       )
@@ -166,18 +166,28 @@ export default function AiAssistant() {
 
   /* ── Document helpers ── */
   const fetchDocuments = async (uid) => {
+    setDocsError('')
     try {
-      const res = await authFetch(`/api/documents/list/${uid}`)
-      const data = await res.json()
+      const data = await apiJson(`/api/documents/list/${uid}`)
       setDocuments(data.documents || [])
     } catch (e) {
       console.error('Failed to fetch documents:', e)
+      setDocsError(`Could not load your documents. ${userMessage(e)}`)   // not "you have no documents"
     }
   }
 
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user) {
+        setUserId(data.user.id)
+        fetchDocuments(data.user.id)
+      }
+    })
+  }, [])
+
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0]
-    if (!file || !userId) return
+    if (!file || !userId || isUploading) return
 
     setIsUploading(true)
     setUploadProgress(`Uploading ${file.name}...`)
@@ -187,18 +197,17 @@ export default function AiAssistant() {
     formData.append('file', file)
 
     try {
-      const res = await authFetch('/api/documents/upload', {
+      const data = await apiJson('/api/documents/upload', {
         method: 'POST',
         body: formData,
+        timeoutMs: 180_000,
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || 'Upload failed')
       setUploadProgress(`✅ ${data.message}`)
       await fetchDocuments(userId)
       setTimeout(() => setUploadProgress(''), 4000)
     } catch (err) {
-      setUploadProgress(`❌ Upload failed: ${err.message}`)
-      setTimeout(() => setUploadProgress(''), 5000)
+      setUploadProgress(`❌ Upload failed: ${userMessage(err)}`)
+      setTimeout(() => setUploadProgress(''), 8000)
     } finally {
       setIsUploading(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -215,27 +224,30 @@ export default function AiAssistant() {
 
   const handleDeleteDoc = async (docId) => {
     if (!userId) return
+    setDocsError('')
     try {
-      await authFetch('/api/documents/delete', {
+      await apiJson('/api/documents/delete', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ document_id: docId, user_id: userId }),
       })
+      // only a confirmed delete removes it from the screen
       setDocuments(prev => prev.filter(d => d.id !== docId))
       if (selectedDocId === docId) setSelectedDocId('')
     } catch (e) {
       console.error('Delete failed:', e)
+      setDocsError(`Could not delete the document. ${userMessage(e)}`)
     }
   }
 
   const handleDocQuery = async (e) => {
     e.preventDefault()
-    if (!docQuestion.trim() || !userId) return
+    if (!docQuestion.trim() || !userId || isQuerying) return
     setIsQuerying(true)
     setDocAnswer(null)
 
     try {
-      const res = await authFetch('/api/documents/query', {
+      const data = await apiJson('/api/documents/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -244,11 +256,9 @@ export default function AiAssistant() {
           document_id: selectedDocId || null,
         }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || 'Query failed')
       setDocAnswer(data)
     } catch (err) {
-      setDocAnswer({ error: err.message })
+      setDocAnswer({ error: userMessage(err) })
     } finally {
       setIsQuerying(false)
     }
@@ -400,6 +410,7 @@ export default function AiAssistant() {
                 accept=".pdf,.txt"
                 style={{ display: 'none' }}
                 onChange={handleFileUpload}
+                disabled={isUploading}
               />
             </div>
 
@@ -407,10 +418,17 @@ export default function AiAssistant() {
               <div className="upload-progress">{uploadProgress}</div>
             )}
 
+            {docsError && (
+              <div className="doc-answer-error" role="alert" style={{ margin: '12px 0' }}>
+                ❌ {docsError}{' '}
+                <button type="button" className="ghost-btn small" onClick={() => fetchDocuments(userId)}>Retry</button>
+              </div>
+            )}
+
             {/* Document list */}
             <div className="doc-list">
               {documents.length === 0 ? (
-                <div className="empty-tasks">No documents uploaded yet.</div>
+                docsError ? null : <div className="empty-tasks">No documents uploaded yet.</div>
               ) : (
                 documents.map(doc => (
                   <div

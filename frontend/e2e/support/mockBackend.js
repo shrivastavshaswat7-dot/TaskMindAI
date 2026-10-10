@@ -47,10 +47,24 @@ export async function installMockBackend(page, options = {}) {
     refreshCount: 0,
     refreshFails: false,              // true: token refresh is rejected (session really expired)
     failStudyTopicWrites: false,      // true: POST/PATCH on study_topics returns 500
-    loginError: false,
+    // Failure injection. restFail: Set of "METHOD table" that answer 500 (e.g. "GET tasks", "POST tasks")
+    restFail: new Set(),
+    restDelayMs: 0,                   // slows every Supabase REST answer (to see loading states)
+    // apiFail: { '/api/priorities': 503 } answers that status; apiMode: { '/api/priorities': 'hang' | 'abort' | 'html' }
+    apiFail: {},
+    apiMode: {},
+    chatMode: 'ok',                   // 'ok' | 'error-event' | 'empty' | 'partial-then-error'
+    extractMode: 'ok',                // 'ok' | 'fail' (server error, 502) | 'abort' (network failure: "Failed to fetch")
+    extractDelayMs: 0,                // makes /api/extract slow, to see the in-progress state
+    loginError: false,                // true: wrong email or password
+    loginErrorCode: null,             // 'email_not_confirmed' | 'invalid_credentials' (real GoTrue error shapes)
+    signupMode: 'confirm',            // 'confirm': needs email verification | 'duplicate': email already registered | 'immediate': confirmation is off
+    passwordLogins: 0,                // how many email+password logins reached the (mocked) server
+    signups: [],                      // { email, redirectTo } of every sign-up request
+    quizFails: false,                 // true: /api/quiz answers 503 (the app then falls back to sample questions)
     tables: {
       tasks: [], timetable_entries: [], subjects: [], attendance_records: [],
-      academic_subjects: [], study_topics: [], ...(options.tables || {}),
+      academic_subjects: [], study_topics: [], ...structuredClone(options.tables || {}),   // a copy: tests must not leak changes into shared seed data
     },
     documents: [{ id: 'doc-1', filename: 'notes.pdf', created_at: '2026-01-01T00:00:00Z' }],
     apiCalls: [],                     // { method, path, authorization, body }
@@ -88,7 +102,13 @@ export async function installMockBackend(page, options = {}) {
     if (url.pathname.endsWith('/token')) {
       const grant = url.searchParams.get('grant_type')
       if (grant === 'password') {
-        if (state.loginError) return json(route, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials' })
+        state.passwordLogins += 1
+        if (state.loginErrorCode === 'email_not_confirmed') {
+          return json(route, 400, { code: 400, error_code: 'email_not_confirmed', msg: 'Email not confirmed' })
+        }
+        if (state.loginError || state.loginErrorCode === 'invalid_credentials') {
+          return json(route, 400, { code: 400, error_code: 'invalid_credentials', msg: 'Invalid login credentials' })
+        }
         return json(route, 200, session())
       }
       if (grant === 'refresh_token') {
@@ -97,6 +117,18 @@ export async function installMockBackend(page, options = {}) {
         state.token = `mock-access-token-${state.refreshCount + 1}`
         return json(route, 200, session())
       }
+    }
+    if (url.pathname.endsWith('/signup')) {
+      const body = req.postDataJSON()
+      state.signups.push({ email: body.email, redirectTo: url.searchParams.get('redirect_to') })
+      if (state.signupMode === 'immediate') return json(route, 200, session())          // confirmation off: session right away
+      const user = {
+        id: '22222222-2222-4222-8222-222222222222', aud: 'authenticated', role: '', email: body.email,
+        user_metadata: body.data || {}, app_metadata: {}, created_at: '2026-01-01T00:00:00Z',
+        // Supabase's answer for an already registered email has NO identities (and no error)
+        identities: state.signupMode === 'duplicate' ? [] : [{ id: 'identity-1', provider: 'email' }],
+      }
+      return json(route, 200, user)                                                          // no session: verification needed
     }
     if (url.pathname.endsWith('/user')) return json(route, 200, session().user)
     if (url.pathname.endsWith('/logout')) return route.fulfill({ status: 204, headers: CORS })
@@ -123,6 +155,10 @@ export async function installMockBackend(page, options = {}) {
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
     if (!(table in state.tables)) return json(route, 404, { code: 'PGRST205', message: `no table ${table}` })
 
+    if (state.restDelayMs) await new Promise((resolve) => setTimeout(resolve, state.restDelayMs))
+    if (state.restFail.has(`${req.method()} ${table}`)) {
+      return json(route, 500, { code: 'XX000', message: `simulated failure: ${req.method()} ${table}` })
+    }
     const rows = state.tables[table]
     const wantsObject = (req.headers()['accept'] || '').includes('vnd.pgrst.object+json')
     const prefer = req.headers()['prefer'] || ''
@@ -193,7 +229,17 @@ export async function installMockBackend(page, options = {}) {
     // Like the real backend: no / wrong / old token -> 401
     if (authorization !== `Bearer ${state.token}`) return json(route, 401, { detail: 'Invalid or expired session.' })
 
-    if (path === '/api/extract') return json(route, 200, { topics: state.extractTopics })
+    const mode = state.apiMode[path]
+    if (mode === 'hang') return new Promise(() => {})                                  // never answers
+    if (mode === 'abort') return route.abort('failed')                                 // network failure
+    if (mode === 'html') return route.fulfill({ status: 502, headers: { ...CORS, 'content-type': 'text/html' }, body: '<html>Bad gateway</html>' })
+    if (state.apiFail[path]) return json(route, state.apiFail[path], state.apiFail[path] === 429 ? { detail: 'Too many requests. Please wait a moment and try again.' } : {})
+    if (path === '/api/extract') {
+      if (state.extractDelayMs) await new Promise((resolve) => setTimeout(resolve, state.extractDelayMs))
+      if (state.extractMode === 'abort') return route.abort('failed')
+      if (state.extractMode === 'fail') return json(route, 502, { detail: 'The AI service failed to analyze the PDFs. Please try again.' })
+      return json(route, 200, { topics: state.extractTopics })
+    }
     if (path === '/api/priorities') return json(route, 200, { ranked: rank(body.topics, Number(body.days_left)) })
     if (path === '/api/plan') {
       const top = body.ranked.slice(0, 3)
@@ -204,7 +250,10 @@ export async function installMockBackend(page, options = {}) {
         ],
       })
     }
-    if (path === '/api/quiz') return json(route, 200, { questions: QUESTIONS })
+    if (path === '/api/quiz') {
+      if (state.quizFails) return json(route, 503, { detail: 'quiz service unavailable' })
+      return json(route, 200, { questions: QUESTIONS })
+    }
     if (path === '/api/quiz/submit') {
       const { answers, questions, current_weakness: current } = body
       const score = questions.filter((q, i) => answers[i] === q.answer).length
@@ -218,18 +267,24 @@ export async function installMockBackend(page, options = {}) {
     if (path === '/api/tasks/prioritize') return json(route, 200, { prioritized_tasks: [] })
     if (path === '/api/email/draft-reply') return json(route, 200, { draft: 'Dear Professor, thank you.', subject_line: 'Re: your email' })
     if (path === '/api/ai/chat') {
-      return route.fulfill({
-        status: 200,
-        headers: { ...CORS, 'content-type': 'text/event-stream' },
-        body: `data: ${JSON.stringify({ chunk: 'Hello from the mocked assistant.' })}\n\ndata: ${JSON.stringify({ done: true })}\n\n`,
-      })
+      const sse = (...events) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('')
+      const bodies = {
+        ok: sse({ chunk: 'Hello from the mocked assistant.' }, { done: true }),
+        'error-event': sse({ error: 'The AI request failed. Please try again.' }),
+        empty: sse({ done: true }),
+        'partial-then-error': sse({ chunk: 'Laplace transforms turn' }, { error: 'The AI request failed. Please try again.' }),
+      }
+      return route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'text/event-stream' }, body: bodies[state.chatMode] })
     }
     if (path.startsWith('/api/documents/list/')) return json(route, 200, { documents: state.documents })
     if (path === '/api/documents/upload') {
       state.documents.push({ id: `doc-${state.documents.length + 1}`, filename: 'uploaded.txt', created_at: new Date().toISOString() })
       return json(route, 200, { document_id: 'doc-x', filename: 'uploaded.txt', chunk_count: 1, message: 'Uploaded', processing_status: 'uploaded' })
     }
-    if (path === '/api/documents/delete') return json(route, 200, { message: 'Document deleted successfully.' })
+    if (path === '/api/documents/delete') {
+      state.documents = state.documents.filter((d) => d.id !== body?.document_id)
+      return json(route, 200, { message: 'Document deleted successfully.' })
+    }
     if (path === '/api/documents/query') {
       return json(route, 200, { answer: 'The mocked answer from your notes.', sources: [{ filename: 'notes.pdf', chunk_index: 0, document_id: 'doc-1' }] })
     }

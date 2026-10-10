@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 
 function Attendance() {
-  const { subjects, addSubject, deleteSubject, markAttendance, attendanceRecords } = useOutletContext()
+  const { subjects, addSubject, deleteSubject, markAttendance, attendanceRecords, dataStatus, failedParts, isBusy } = useOutletContext()
+  const loading = dataStatus === 'loading'
+  const subjectsUnavailable = loading || failedParts.includes('attendance subjects') || failedParts.includes('attendance records')
   const [showAddForm, setShowAddForm] = useState(false)
   const [newSubject, setNewSubject] = useState('')
   const [activeDate, setActiveDate] = useState(new Date().toISOString().split('T')[0]) // YYYY-MM-DD
@@ -10,7 +12,8 @@ function Attendance() {
   const handleAddSubject = async (e) => {
     e.preventDefault()
     if (!newSubject.trim()) return
-    await addSubject(newSubject.trim())
+    const result = await addSubject(newSubject.trim())
+    if (result?.error) return          // keep the form and the typed name; the layout shows what went wrong
     setNewSubject('')
     setShowAddForm(false)
   }
@@ -61,7 +64,7 @@ function Attendance() {
               onChange={(e) => setNewSubject(e.target.value)}
               required
             />
-            <button type="submit" className="primary-btn">Save</button>
+            <button type="submit" className="primary-btn" disabled={isBusy('addSubject')}>Save</button>
           </form>
         </section>
       )}
@@ -77,7 +80,9 @@ function Attendance() {
       </div>
 
       <section className="attendance-grid">
-        {subjects.length === 0 ? (
+        {subjectsUnavailable ? (
+          <div className="empty-tasks dashboard-card" style={{ gridColumn: '1 / -1' }}>{loading ? 'Loading your attendance…' : 'Your attendance could not be loaded. Use Retry above.'}</div>
+        ) : subjects.length === 0 ? (
           <div className="empty-tasks dashboard-card" style={{ gridColumn: '1 / -1' }}>No subjects added yet. Add a subject to start tracking attendance!</div>
         ) : (
           subjects.map((subject) => {
@@ -128,9 +133,9 @@ function Attendance() {
                     </div>
                   ) : (
                     <>
-                      <button className="btn-present" onClick={() => markAttendance(subject.id, activeDate, 'present')}>Present</button>
-                      <button className="btn-absent" onClick={() => markAttendance(subject.id, activeDate, 'absent')}>Absent</button>
-                      <button className="btn-cancelled" onClick={() => markAttendance(subject.id, activeDate, 'cancelled')}>Cancelled</button>
+                      <button className="btn-present" disabled={isBusy(`attendance:${subject.id}`)} onClick={() => markAttendance(subject.id, activeDate, 'present')}>Present</button>
+                      <button className="btn-absent" disabled={isBusy(`attendance:${subject.id}`)} onClick={() => markAttendance(subject.id, activeDate, 'absent')}>Absent</button>
+                      <button className="btn-cancelled" disabled={isBusy(`attendance:${subject.id}`)} onClick={() => markAttendance(subject.id, activeDate, 'cancelled')}>Cancelled</button>
                     </>
                   )}
                 </div>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { authFetch } from '../api/authFetch'
+import { apiJson } from '../api/authFetch'
+import { userMessage } from '../api/errors'
 
 const TONES = [
   { value: 'formal', label: '🎩 Formal', desc: 'Official & professional' },
@@ -30,7 +31,7 @@ export default function EmailAssistant() {
   const [copiedSubject, setCopiedSubject] = useState(false)
 
   const generateReply = async (adjust = null) => {
-    if (!originalEmail.trim()) return
+    if (!originalEmail.trim() || isGenerating) return
     setIsGenerating(true)
     setError('')
 
@@ -43,19 +44,16 @@ export default function EmailAssistant() {
         adjust,
       }
 
-      const res = await authFetch('/api/email/draft-reply', {
+      const data = await apiJson('/api/email/draft-reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
 
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || 'Failed to generate reply')
-
       setDraft(data.draft || '')
       setSubjectLine(data.subject_line || '')
     } catch (err) {
-      setError(err.message)
+      setError(userMessage(err))
     } finally {
       setIsGenerating(false)
     }

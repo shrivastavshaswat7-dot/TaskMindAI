@@ -1,8 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
+import {
+  AUTH_LANDING,
+  VERIFY_LOGIN_WAIT_MS,
+  VERIFICATION,
+  VERIFY_SETTLE_TIMEOUT_MS,
+  clearAuthHash,
+  waitForSettled,
+} from './api/authLanding'
+import { landingNotice } from './api/authMessages'
 import { supabase } from './supabase'
 import Layout from './components/Layout'
-import { authFetch } from './api/authFetch'
+import { apiJson } from './api/authFetch'
+import { userMessage } from './api/errors'
 import { ensureSubject, loadStudyData, saveTopics, saveWeakness } from './api/studyDb'
 import { clampWeakness, keepIfEqual, normalizeSubjectName, pickActiveSubjectId } from './api/studyMapping'
 import Auth from './pages/Auth'
@@ -17,13 +27,30 @@ import Priorities from './pages/Priorities'
 import StudyNow from './pages/StudyNow'
 import Quiz from './pages/Quiz'
 import './App.css'
+import './theme.css'
 
 const NO_TOPICS = []
+
+// Uncompleted first, then by AI priority score (high first), then newest first
+const compareTasks = (a, b) => {
+  if (a.completed !== b.completed) return a.completed ? 1 : -1
+  if (a.ai_priority_score != null && b.ai_priority_score != null) return b.ai_priority_score - a.ai_priority_score
+  return new Date(b.created_at) - new Date(a.created_at)
+}
 const ACTIVE_SUBJECT_KEY = 'taskmind.activeStudySubject'
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [isRecoveryMode, setIsRecoveryMode] = useState(false)
+  // Message for the login screen after an emailed link ("Email verified, please log in" / "link expired")
+  const [authNotice, setAuthNotice] = useState(() => landingNotice(AUTH_LANDING))
+  // Email-verification link: Supabase starts a session from it. We must NOT treat that as a login, so every auth
+  // event is ignored until the user logs in on purpose (released in markLoggedIn below).
+  const verifyLandingRef = useRef(AUTH_LANDING.kind === 'signup')
+  // True while that temporary session is being ended. The login button stays disabled meanwhile: a login finished
+  // before the pending sign-out settles would have its brand-new session removed by that sign-out.
+  const [verifyingLanding, setVerifyingLanding] = useState(AUTH_LANDING.kind === 'signup')
+  const verificationEndedRef = useRef(null)   // the one in-flight "end the temporary session" promise
 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -34,6 +61,17 @@ function App() {
   const [newTaskPriority, setNewTaskPriority] = useState('medium')
   const [newTaskCategory, setNewTaskCategory] = useState('general')
   const [isPrioritizing, setIsPrioritizing] = useState(false)
+
+  // Loading of the user's data: 'loading' until the first load has finished, 'error' if any part failed.
+  // Pages must not show "no tasks yet" style empty states for either of those.
+  const [dataStatus, setDataStatus] = useState('loading')
+  const [dataError, setDataError] = useState('')
+  const [failedParts, setFailedParts] = useState([])
+  // Message for the user when an action failed (rendered by the layout, dismissible)
+  const [notice, setNotice] = useState(null)
+  // Actions currently running: a second click on the same action is ignored instead of submitting twice
+  const busyRef = useRef(new Set())
+  const [busyKeys, setBusyKeys] = useState([])
 
   const [timetable, setTimetable] = useState([])
   const [subjects, setSubjects] = useState([])
@@ -48,6 +86,30 @@ function App() {
   // /api/plan ka result: { ranked, hours, daysLeft, blocks }
   const [studyPlan, setStudyPlan] = useState(null)
 
+  const noticeTimer = useRef(null)
+  const dismissNotice = () => {
+    clearTimeout(noticeTimer.current)
+    setNotice(null)
+  }
+  // Shown by the layout; goes away by itself after a while (or when dismissed)
+  const reportError = (text) => {
+    clearTimeout(noticeTimer.current)
+    setNotice({ id: Date.now(), type: 'error', text })
+    noticeTimer.current = setTimeout(() => setNotice(null), 12000)
+  }
+  const isBusy = (key) => busyKeys.includes(key)
+  const runOnce = async (key, action) => {
+    if (busyRef.current.has(key)) return undefined
+    busyRef.current.add(key)
+    setBusyKeys([...busyRef.current])
+    try {
+      return await action()
+    } finally {
+      busyRef.current.delete(key)
+      setBusyKeys([...busyRef.current])
+    }
+  }
+
   const loadTasks = async (userId) => {
     const { data, error } = await supabase
       .from('tasks')
@@ -57,7 +119,7 @@ function App() {
 
     if (error) {
       console.error('Error loading tasks:', error)
-      return
+      return 'tasks'
     }
 
     // Sort: uncompleted first, then by priority score (desc), then by creation date
@@ -80,7 +142,7 @@ function App() {
 
     if (error) {
       console.error('Error loading timetable:', error)
-      return
+      return 'timetable'
     }
     setTimetable(data || [])
   }
@@ -94,7 +156,7 @@ function App() {
 
     if (error) {
       console.error('Error loading subjects:', error)
-      return
+      return 'attendance subjects'
     }
     setSubjects(data || [])
   }
@@ -109,7 +171,7 @@ function App() {
 
     if (error) {
       console.error('Error loading attendance records:', error)
-      return
+      return 'attendance records'
     }
     setAttendanceRecords(data || [])
   }
@@ -136,21 +198,44 @@ function App() {
     } catch (error) {
       // Migration (backend/migrations/study_topics.sql) apply na hui ho toh bhi app chalna chahiye
       console.error('Error loading study topics:', error)
+      return 'study topics'
     }
+    return null
   }
 
+  // Each loader returns the name of what it could not load (or nothing). A failed load must be visible: showing an
+  // empty list would look like "you have no tasks" when the truth is "we could not load them".
   const loadAllData = async (userId) => {
-    await Promise.all([
+    const results = await Promise.all([
       loadTasks(userId),
       loadTimetable(userId),
       loadSubjects(userId),
       loadAttendance(userId),
       loadStudy(userId)
     ])
+    const failed = results.filter(Boolean)
+    setFailedParts(failed)
+    setDataError(failed.length ? `Could not load your ${failed.join(', ')}. What you see may be incomplete.` : '')
+    setDataStatus(failed.length ? 'error' : 'ready')
+  }
+
+  const retryLoad = async () => {
+    setDataStatus('loading')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setDataError('You are not signed in. Please log in again.')
+      setDataStatus('error')
+      return
+    }
+    await loadAllData(user.id)
   }
 
   // Sab user-specific data hatao (logout button ya expired session, dono pe), taaki agla user purana data na dekhe
   const clearUserData = () => {
+    setDataStatus('loading')
+    setDataError('')
+    setFailedParts([])
+    setNotice(null)
     setTasks([])
     setTimetable([])
     setSubjects([])
@@ -169,13 +254,54 @@ function App() {
       setIsRecoveryMode(true)
     }
 
+    // Ends the temporary session that the verification link created. The scope is 'local': Supabase revokes only this
+    // one session (a server call) and clears it from this browser; the user's other sessions are not touched.
+    // It always settles (success or failure), and only then is the login button enabled again.
+    const endVerificationSession = () => {
+      if (!verificationEndedRef.current) {
+        verificationEndedRef.current = (async () => {
+          try {
+            await supabase.auth.signOut({ scope: 'local' })
+          } catch (err) {
+            console.error('Could not end the temporary verification session:', err)
+          } finally {
+            clearAuthHash()
+            setVerifyingLanding(false)
+            VERIFICATION?.resolve()   // lets a waiting login proceed (see waitForVerification)
+          }
+        })()
+      }
+      return verificationEndedRef.current
+    }
+
+    // Even if the sign-out hangs, never leave the login button disabled indefinitely
+    const settleTimer = verifyLandingRef.current
+      ? setTimeout(() => setVerifyingLanding(false), VERIFY_SETTLE_TIMEOUT_MS)
+      : null
+
     const getSession = async () => {
-      const { data, error } = await supabase.auth.getSession()
+      let result
+      try {
+        result = await supabase.auth.getSession()
+      } catch (err) {
+        result = { data: { session: null }, error: err }
+      }
+
+      // getSession() resolves after Supabase has consumed the link, so the temporary session exists now: end it.
+      // This runs before the error check so the "finishing verification" state always ends.
+      if (verifyLandingRef.current) {
+        await endVerificationSession()
+        return
+      }
+
+      const { data, error } = result
 
       if (error) {
         console.error(error)
         return
       }
+
+      if (AUTH_LANDING.kind === 'error') clearAuthHash()   // expired/invalid link: Supabase leaves the hash in place
 
       if (data.session && !window.location.hash.includes('type=recovery')) {
         const user = data.session.user
@@ -193,6 +319,10 @@ function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
+      // Supabase delivers SIGNED_IN for the verification link *after* getSession() resolves, so this guard (not a
+      // timer) is what keeps the dashboard closed until an explicit login.
+      if (verifyLandingRef.current) return
+
       if (event === 'PASSWORD_RECOVERY') {
         setIsRecoveryMode(true)
         setIsLoggedIn(false)
@@ -216,105 +346,103 @@ function App() {
     })
 
     return () => {
+      clearTimeout(settleTimer)
       subscription.unsubscribe()
     }
   }, [])
 
   const addTask = async (e) => {
     e.preventDefault()
+    if (!newTask.trim()) return
 
-    if (!newTask.trim()) {
-      return
-    }
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) {
-      return
-    }
-
-    const { data, error } = await supabase
-      .from('tasks')
-      .insert([
-        {
-          user_id: user.id,
-          title: newTask.trim(),
-          completed: false,
-          due_date: newTaskDue || null,
-          priority: newTaskPriority,
-          category: newTaskCategory,
-        },
-      ])
-      .select()
-      .single()
-
-    if (error) {
-      console.error('Error adding task:', error)
-      return
-    }
-
-    setTasks((prev) => [data, ...prev].sort((a, b) => {
-      if (a.completed !== b.completed) return a.completed ? 1 : -1
-      if (a.ai_priority_score != null && b.ai_priority_score != null) {
-        return b.ai_priority_score - a.ai_priority_score
+    await runOnce('addTask', async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) {
+        reportError('Your session has expired. Please log in again.')
+        return
       }
-      return new Date(b.created_at) - new Date(a.created_at)
-    }))
-    setNewTask('')
-    setNewTaskDue('')
-    setNewTaskPriority('medium')
-    setNewTaskCategory('general')
+
+      const { data, error } = await supabase
+        .from('tasks')
+        .insert([
+          {
+            user_id: user.id,
+            title: newTask.trim(),
+            completed: false,
+            due_date: newTaskDue || null,
+            priority: newTaskPriority,
+            category: newTaskCategory,
+          },
+        ])
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error adding task:', error)
+        reportError('Could not add the task. What you typed is still there, so you can try again.')
+        return
+      }
+
+      setTasks((prev) => [data, ...prev].sort(compareTasks))
+      setNewTask('')
+      setNewTaskDue('')
+      setNewTaskPriority('medium')
+      setNewTaskCategory('general')
+    })
   }
 
   const toggleTask = async (task) => {
-    const { data, error } = await supabase
-      .from('tasks')
-      .update({ completed: !task.completed })
-      .eq('id', task.id)
-      .select()
-      .single()
+    await runOnce(`task:${task.id}`, async () => {
+      const { data, error } = await supabase
+        .from('tasks')
+        .update({ completed: !task.completed })
+        .eq('id', task.id)
+        .select()
+        .single()
 
-    if (error) {
-      console.error('Error updating task:', error)
-      return
-    }
+      if (error) {
+        console.error('Error updating task:', error)
+        reportError('Could not update the task. Please try again.')
+        return
+      }
 
-    setTasks((prev) =>
-      prev.map((item) => (item.id === task.id ? data : item))
-    )
+      setTasks((prev) => prev.map((item) => (item.id === task.id ? data : item)))
+    })
   }
 
   const deleteTask = async (taskId) => {
-    const { error } = await supabase
-      .from('tasks')
-      .delete()
-      .eq('id', taskId)
+    await runOnce(`task:${taskId}`, async () => {
+      const { error } = await supabase.from('tasks').delete().eq('id', taskId)
 
-    if (error) {
-      console.error('Error deleting task:', error)
-      return
-    }
+      if (error) {
+        console.error('Error deleting task:', error)
+        reportError('Could not delete the task. Please try again.')
+        return
+      }
 
-    setTasks((prev) => prev.filter((task) => task.id !== taskId))
+      setTasks((prev) => prev.filter((task) => task.id !== taskId))
+    })
   }
 
   const prioritizeTasks = async () => {
+    if (isPrioritizing) return
     setIsPrioritizing(true)
     try {
-      const response = await authFetch('/api/tasks/prioritize', {
+      const { prioritized_tasks } = await apiJson('/api/tasks/prioritize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tasks }),
       })
-      if (!response.ok) throw new Error('Prioritization failed')
-      
-      const { prioritized_tasks } = await response.json()
-      if (!prioritized_tasks || prioritized_tasks.length === 0) return
+      if (!prioritized_tasks || prioritized_tasks.length === 0) {
+        reportError('The AI did not return any priorities. Please try again.')
+        return
+      }
 
       const updatedTasks = [...tasks]
-      
+      let notSaved = 0
+
       for (const pt of prioritized_tasks) {
         const { error } = await supabase
           .from('tasks')
@@ -325,139 +453,164 @@ function App() {
           })
           .eq('id', pt.id)
 
-        if (!error) {
-          const taskIndex = updatedTasks.findIndex(t => t.id === pt.id)
-          if (taskIndex !== -1) {
-            updatedTasks[taskIndex] = {
-              ...updatedTasks[taskIndex],
-              ai_priority_score: pt.ai_priority_score,
-              ai_priority_reason: pt.ai_priority_reason,
-              priority: pt.suggested_priority,
-            }
+        if (error) {
+          notSaved += 1
+          continue
+        }
+        const taskIndex = updatedTasks.findIndex((t) => t.id === pt.id)
+        if (taskIndex !== -1) {
+          updatedTasks[taskIndex] = {
+            ...updatedTasks[taskIndex],
+            ai_priority_score: pt.ai_priority_score,
+            ai_priority_reason: pt.ai_priority_reason,
+            priority: pt.suggested_priority,
           }
         }
       }
-      
-      updatedTasks.sort((a, b) => {
-        if (a.completed !== b.completed) return a.completed ? 1 : -1
-        if (a.ai_priority_score != null && b.ai_priority_score != null) {
-           return b.ai_priority_score - a.ai_priority_score
-        }
-        return new Date(b.created_at) - new Date(a.created_at)
-      })
-      
-      setTasks(updatedTasks)
+
+      if (notSaved > 0) {
+        reportError(`The AI ranked your tasks, but ${notSaved} of them could not be saved, so those keep their old priority.`)
+      }
+      setTasks(updatedTasks.sort(compareTasks))
     } catch (err) {
       console.error('Error prioritizing tasks:', err)
+      reportError(userMessage(err))
     } finally {
       setIsPrioritizing(false)
     }
   }
 
+  // The timetable / attendance actions return { data } or { error } so the page can keep the user's input on failure
   const addTimetableEntry = async (entry) => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    const result = await runOnce('addTimetableEntry', async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        reportError('Your session has expired. Please log in again.')
+        return { error: new Error('not signed in') }
+      }
 
-    const { data, error } = await supabase
-      .from('timetable_entries')
-      .insert([{ ...entry, user_id: user.id }])
-      .select()
-      .single()
+      const { data, error } = await supabase
+        .from('timetable_entries')
+        .insert([{ ...entry, user_id: user.id }])
+        .select()
+        .single()
 
-    if (error) {
-      console.error('Error adding timetable entry:', error)
-      return { error }
-    }
+      if (error) {
+        console.error('Error adding timetable entry:', error)
+        reportError('Could not add the class. What you entered is still in the form, so you can try again.')
+        return { error }
+      }
 
-    setTimetable((prev) => [...prev, data])
-    return { data }
+      setTimetable((prev) => [...prev, data])
+      return { data }
+    })
+    return result ?? { error: new Error('already saving') }
   }
 
   const deleteTimetableEntry = async (id) => {
-    const { error } = await supabase
-      .from('timetable_entries')
-      .delete()
-      .eq('id', id)
+    await runOnce(`timetable:${id}`, async () => {
+      const { error } = await supabase.from('timetable_entries').delete().eq('id', id)
 
-    if (error) {
-      console.error('Error deleting timetable entry:', error)
-      return
-    }
+      if (error) {
+        console.error('Error deleting timetable entry:', error)
+        reportError('Could not delete the class. Please try again.')
+        return
+      }
 
-    setTimetable((prev) => prev.filter((entry) => entry.id !== id))
+      setTimetable((prev) => prev.filter((entry) => entry.id !== id))
+    })
   }
 
-
-
   const addSubject = async (name, totalClasses = 0, attendedClasses = 0) => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    const result = await runOnce('addSubject', async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        reportError('Your session has expired. Please log in again.')
+        return { error: new Error('not signed in') }
+      }
 
-    const { data, error } = await supabase
-      .from('subjects')
-      .insert([{ name, total_classes: totalClasses, attended_classes: attendedClasses, user_id: user.id }])
-      .select()
-      .single()
+      const { data, error } = await supabase
+        .from('subjects')
+        .insert([{ name, total_classes: totalClasses, attended_classes: attendedClasses, user_id: user.id }])
+        .select()
+        .single()
 
-    if (error) {
-      console.error('Error adding subject:', error)
-      return { error }
-    }
+      if (error) {
+        console.error('Error adding subject:', error)
+        reportError('Could not add the subject. What you typed is still there, so you can try again.')
+        return { error }
+      }
 
-    setSubjects((prev) => [...prev, data])
-    return { data }
+      setSubjects((prev) => [...prev, data])
+      return { data }
+    })
+    return result ?? { error: new Error('already saving') }
   }
 
   const deleteSubject = async (id) => {
-    const { error } = await supabase
-      .from('subjects')
-      .delete()
-      .eq('id', id)
+    await runOnce(`subject:${id}`, async () => {
+      const { error } = await supabase.from('subjects').delete().eq('id', id)
 
-    if (error) {
-      console.error('Error deleting subject:', error)
-      return
-    }
+      if (error) {
+        console.error('Error deleting subject:', error)
+        reportError('Could not delete the subject. Please try again.')
+        return
+      }
 
-    setSubjects((prev) => prev.filter((s) => s.id !== id))
-    // Also remove related attendance records from local state
-    setAttendanceRecords((prev) => prev.filter((r) => r.subject_id !== id))
+      setSubjects((prev) => prev.filter((s) => s.id !== id))
+      // Also remove related attendance records from local state
+      setAttendanceRecords((prev) => prev.filter((r) => r.subject_id !== id))
+    })
   }
 
+  // One mark = one attendance record + the subject's totals. Both must succeed: if the totals cannot be updated the
+  // record is removed again, so the screen never shows a mark that would disappear (or double count) on reload.
   const markAttendance = async (subjectId, date, status) => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    const { data, error } = await supabase
-      .from('attendance_records')
-      .insert([{ subject_id: subjectId, date, status, user_id: user.id }])
-      .select()
-      .single()
-
-    if (error) {
-      console.error('Error marking attendance:', error)
-      return { error }
-    }
-
-    setAttendanceRecords((prev) => [...prev, data])
-
-    // Update subject stats locally and on server
-    const subject = subjects.find(s => s.id === subjectId)
-    if (subject) {
-      const newTotal = status !== 'cancelled' ? subject.total_classes + 1 : subject.total_classes
-      const newAttended = status === 'present' ? subject.attended_classes + 1 : subject.attended_classes
-
-      if (newTotal !== subject.total_classes || newAttended !== subject.attended_classes) {
-        await supabase
-          .from('subjects')
-          .update({ total_classes: newTotal, attended_classes: newAttended })
-          .eq('id', subjectId)
-
-        setSubjects((prev) => prev.map(s => s.id === subjectId ? { ...s, total_classes: newTotal, attended_classes: newAttended } : s))
+    const result = await runOnce(`attendance:${subjectId}`, async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        reportError('Your session has expired. Please log in again.')
+        return { error: new Error('not signed in') }
       }
-    }
 
-    return { data }
+      const { data, error } = await supabase
+        .from('attendance_records')
+        .insert([{ subject_id: subjectId, date, status, user_id: user.id }])
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error marking attendance:', error)
+        reportError('Could not save the attendance mark. Please try again.')
+        return { error }
+      }
+
+      const subject = subjects.find((s) => s.id === subjectId)
+      if (subject) {
+        const newTotal = status !== 'cancelled' ? subject.total_classes + 1 : subject.total_classes
+        const newAttended = status === 'present' ? subject.attended_classes + 1 : subject.attended_classes
+
+        if (newTotal !== subject.total_classes || newAttended !== subject.attended_classes) {
+          const { error: totalsError } = await supabase
+            .from('subjects')
+            .update({ total_classes: newTotal, attended_classes: newAttended })
+            .eq('id', subjectId)
+
+          if (totalsError) {
+            console.error('Error updating attendance totals:', totalsError)
+            await supabase.from('attendance_records').delete().eq('id', data.id)   // best effort: undo the record
+            reportError('Could not update the attendance total, so this mark was not saved. Please try again.')
+            return { error: totalsError }
+          }
+
+          setSubjects((prev) => prev.map((s) => (s.id === subjectId ? { ...s, total_classes: newTotal, attended_classes: newAttended } : s)))
+        }
+      }
+
+      setAttendanceRecords((prev) => [...prev, data])
+      return { data }
+    })
+    return result ?? { error: new Error('already saving') }
   }
 
   const topics = topicsBySubject[activeSubjectId] || NO_TOPICS
@@ -519,9 +672,10 @@ function App() {
     if (!String(activeSubjectId).startsWith('local:')) {
       supabase.auth.getUser().then(({ data: { user } }) => {
         if (user) {
-          saveWeakness(user.id, activeSubjectId, topicId, value).catch((error) =>
+          saveWeakness(user.id, activeSubjectId, topicId, value).catch((error) => {
             console.error('Error saving weakness:', error)
-          )
+            reportError('The new weakness score could not be saved, so it will be back to the old value after a reload.')
+          })
         }
       })
     }
@@ -535,10 +689,26 @@ function App() {
     clearUserData()
   }
 
+  // Auth awaits this before it signs in: resolves at once normally, and while a verification sign-out is still pending it
+  // waits for it (at most VERIFY_LOGIN_WAIT_MS, so a sign-out that never answers cannot block a login forever)
+  const waitForVerification = () => waitForSettled(VERIFICATION?.promise, VERIFY_LOGIN_WAIT_MS)
+
+  // Auth calls this after a successful explicit login: only now may auth events open the dashboard again
+  const markLoggedIn = (value) => {
+    if (value) {
+      verifyLandingRef.current = false
+      setAuthNotice(null)
+    }
+    setIsLoggedIn(value)
+  }
+
   if (!isLoggedIn || isRecoveryMode) {
     return (
       <Auth
-        setIsLoggedIn={setIsLoggedIn}
+        setIsLoggedIn={markLoggedIn}
+        initialNotice={authNotice}
+        loginBusy={verifyingLanding}
+        waitForVerification={waitForVerification}
         setName={setName}
         setEmail={setEmail}
         loadData={loadAllData}
@@ -587,6 +757,14 @@ function App() {
     studyPlan,
     setStudyPlan,
     handleLogout,
+    dataStatus,
+    dataError,
+    failedParts,
+    retryLoad,
+    notice,
+    dismissNotice,
+    reportError,
+    isBusy,
   }
 
   return (

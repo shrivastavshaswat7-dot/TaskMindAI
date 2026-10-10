@@ -82,6 +82,12 @@ function Quiz() {
   }
 
   const updatePriorities = async () => {
+    // Sample questions are not a real assessment: never save their result or re-rank real priorities
+    if (isMock) {
+      navigate('/priorities')
+      return
+    }
+
     const weakness = Number(result?.updated_weakness)
     // Khaali result (jaise backend stub ka total 0) se weakness overwrite mat karo
     if (!Number.isFinite(weakness) || !(Number(result?.total) > 0)) {
@@ -266,7 +272,7 @@ function Quiz() {
           <div className="stat-icon orange">▲</div>
           <div>
             <span>Weakness</span>
-            <h2>{topic?.weakness ?? 50} → {result?.updated_weakness ?? '—'}</h2>
+            <h2>{isMock ? 'Not saved' : `${topic?.weakness ?? 50} → ${result?.updated_weakness ?? '—'}`}</h2>
           </div>
         </div>
       </section>
@@ -278,6 +284,13 @@ function Quiz() {
             <p>{isMock ? 'Result from sample questions' : 'Quiz result'}</p>
           </div>
         </div>
+
+        {isMock && (
+          <p className="doc-filter-note">
+            These were built-in sample questions because the quiz service could not be reached. Your score was not
+            saved and your priorities were not changed. Try again in a moment for a real quiz.
+          </p>
+        )}
 
         <h3 className="quiz-subheading">Weak subtopics</h3>
         {weakSubtopics.length === 0 ? (
@@ -294,9 +307,15 @@ function Quiz() {
           <button className="ghost-btn" onClick={resetQuiz} disabled={isLoading}>
             Try another topic
           </button>
-          <button className="ai-btn" onClick={updatePriorities} disabled={isLoading}>
-            {isLoading ? 'Updating...' : 'Update Priorities'}
-          </button>
+          {isMock ? (
+            <button className="ai-btn" onClick={() => navigate('/priorities')}>
+              Back to Priorities
+            </button>
+          ) : (
+            <button className="ai-btn" onClick={updatePriorities} disabled={isLoading}>
+              {isLoading ? 'Updating...' : 'Update Priorities'}
+            </button>
+          )}
         </div>
       </section>
     </>
