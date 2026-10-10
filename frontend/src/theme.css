@@ -324,6 +324,17 @@
   display: none;
 }
 
+/* Shared: primary button on light surfaces */
+.dx-btn-primary {
+  background: linear-gradient(135deg, var(--brand-500), var(--brand-400));
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(109, 93, 252, 0.3);
+}
+
+.dx-btn-primary:hover {
+  box-shadow: 0 12px 26px rgba(109, 93, 252, 0.4);
+}
+
 /* ---------------------------------------------------------------------------------------------------------------------
    Dashboard page
    --------------------------------------------------------------------------------------------------------------------- */

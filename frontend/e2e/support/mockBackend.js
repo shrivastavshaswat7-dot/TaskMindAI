@@ -47,6 +47,8 @@ export async function installMockBackend(page, options = {}) {
     refreshCount: 0,
     refreshFails: false,              // true: token refresh is rejected (session really expired)
     failStudyTopicWrites: false,      // true: POST/PATCH on study_topics returns 500
+    extractMode: 'ok',                // 'ok' | 'fail' (server error, 502) | 'abort' (network failure: "Failed to fetch")
+    extractDelayMs: 0,                // makes /api/extract slow, to see the in-progress state
     loginError: false,
     tables: {
       tasks: [], timetable_entries: [], subjects: [], attendance_records: [],
@@ -193,7 +195,12 @@ export async function installMockBackend(page, options = {}) {
     // Like the real backend: no / wrong / old token -> 401
     if (authorization !== `Bearer ${state.token}`) return json(route, 401, { detail: 'Invalid or expired session.' })
 
-    if (path === '/api/extract') return json(route, 200, { topics: state.extractTopics })
+    if (path === '/api/extract') {
+      if (state.extractDelayMs) await new Promise((resolve) => setTimeout(resolve, state.extractDelayMs))
+      if (state.extractMode === 'abort') return route.abort('failed')
+      if (state.extractMode === 'fail') return json(route, 502, { detail: 'The AI service failed to analyze the PDFs. Please try again.' })
+      return json(route, 200, { topics: state.extractTopics })
+    }
     if (path === '/api/priorities') return json(route, 200, { ranked: rank(body.topics, Number(body.days_left)) })
     if (path === '/api/plan') {
       const top = body.ranked.slice(0, 3)
