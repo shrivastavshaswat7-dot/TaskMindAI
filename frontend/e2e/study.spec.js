@@ -103,6 +103,46 @@ test('priorities, study plan, quiz and "Update Priorities" persist the new weakn
   expect(mock.consoleErrors).toEqual([])
 })
 
+test('a sample-mode quiz never saves weakness or re-ranks real priorities', async ({ page }) => {
+  const mock = await installMockBackend(page)
+  await loginThroughUi(page)
+  await extract(page, 'Maths')
+  await expect(page.getByText('Saved to "Maths"')).toBeVisible()
+  await goto(page, /Priorities/)                      // a ranking exists, so the old code would re-rank after the quiz
+  await page.getByRole('button', { name: /Calculate Priorities/ }).click()
+  await expect(page.locator('.priority-table tbody tr')).toHaveCount(3)
+  const rankingBefore = await page.locator('.priority-table tbody tr').allInnerTexts()
+  const weaknessBefore = topicRows(mock).map((r) => [r.topic_key, r.weakness])
+
+  mock.quizFails = true                               // the quiz service is down: the app falls back to sample questions
+  await goto(page, /Quiz/)
+  await page.getByRole('button', { name: /Start Quiz/ }).click()
+  await expect(page.getByText('Sample mode')).toBeVisible()
+  for (let i = 0; i < 4; i++) {
+    await page.locator('.quiz-option').first().click()
+    if (i < 3) await page.getByRole('button', { name: /Next/ }).click()
+  }
+  await page.getByRole('button', { name: 'Submit Quiz' }).click()
+
+  // Result screen: clearly marked, with no way to save, only a way back
+  await expect(page.getByText(/score was not saved/i)).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Not saved', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Update Priorities' })).toHaveCount(0)
+  const callsBefore = mock.apiCalls.length
+  await page.getByRole('button', { name: 'Back to Priorities' }).click()
+  await expect(page).toHaveURL(/\/priorities/)
+
+  // Nothing real changed: stored weakness, API calls, ranking, and it stays that way after a refresh
+  expect(topicRows(mock).map((r) => [r.topic_key, r.weakness])).toEqual(weaknessBefore)
+  expect(mock.apiCalls.slice(callsBefore).filter((c) => c.path === '/api/priorities')).toHaveLength(0)
+  expect(mock.apiCalls.some((c) => c.path === '/api/quiz/submit')).toBe(false)
+  expect(await page.locator('.priority-table tbody tr').allInnerTexts()).toEqual(rankingBefore)   // same ranking, same numbers
+  await expect(page.getByText(/Topics have changed/)).toHaveCount(0)
+  await page.reload()
+  expect(topicRows(mock).every((r) => r.weakness === 50)).toBe(true)
+  expect(mock.consoleErrors.filter((e) => !e.includes('503'))).toEqual([])
+})
+
 test('a failed database save is reported as a failure, not as success', async ({ page }) => {
   const mock = await installMockBackend(page)
   mock.failStudyTopicWrites = true

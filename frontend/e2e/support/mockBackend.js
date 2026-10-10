@@ -47,6 +47,7 @@ export async function installMockBackend(page, options = {}) {
     refreshCount: 0,
     refreshFails: false,              // true: token refresh is rejected (session really expired)
     failStudyTopicWrites: false,      // true: POST/PATCH on study_topics returns 500
+    quizFails: false,                 // true: /api/quiz answers 503 (the app then falls back to sample questions)
     loginError: false,
     tables: {
       tasks: [], timetable_entries: [], subjects: [], attendance_records: [],
@@ -204,7 +205,10 @@ export async function installMockBackend(page, options = {}) {
         ],
       })
     }
-    if (path === '/api/quiz') return json(route, 200, { questions: QUESTIONS })
+    if (path === '/api/quiz') {
+      if (state.quizFails) return json(route, 503, { detail: 'quiz service unavailable' })
+      return json(route, 200, { questions: QUESTIONS })
+    }
     if (path === '/api/quiz/submit') {
       const { answers, questions, current_weakness: current } = body
       const score = questions.filter((q, i) => answers[i] === q.answer).length
