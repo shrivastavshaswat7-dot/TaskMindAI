@@ -15,7 +15,7 @@ const formatSize = (bytes) =>
 
 // A network-level failure ("Failed to fetch") says nothing useful; explain the likely causes instead
 const friendlyError = (err) =>
-  /failed to fetch|networkerror|load failed/i.test(err?.message || '')
+  err?.code === 'network' || /failed to fetch|networkerror|load failed/i.test(err?.message || '')
     ? 'Could not reach the analysis server. If it has been idle it may be waking up (this can take up to a minute). Your files are still selected, so you can try again.'
     : err?.message || 'Something went wrong while analysing the papers. Please try again.'
 

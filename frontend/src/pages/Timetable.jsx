@@ -5,7 +5,9 @@ const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 const COLORS = ['#6d5dfc', '#5ee7a1', '#60a5fa', '#fbbf24', '#f87171', '#a69cff']
 
 function Timetable() {
-  const { timetable, addTimetableEntry, deleteTimetableEntry } = useOutletContext()
+  const { timetable, addTimetableEntry, deleteTimetableEntry, dataStatus, failedParts, isBusy } = useOutletContext()
+  const loading = dataStatus === 'loading'
+  const timetableUnavailable = loading || failedParts.includes('timetable')
   const [activeDay, setActiveDay] = useState(new Date().getDay() === 0 ? 6 : new Date().getDay() - 1)
   
   const [showForm, setShowForm] = useState(false)
@@ -19,24 +21,30 @@ function Timetable() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (isSubmitting) return
     setIsSubmitting(true)
-    await addTimetableEntry({
-      day_of_week: activeDay,
-      subject,
-      start_time: startTime,
-      end_time: endTime,
-      room,
-      teacher,
-      color
-    })
-    setSubject('')
-    setStartTime('')
-    setEndTime('')
-    setRoom('')
-    setTeacher('')
-    setColor(COLORS[0])
-    setShowForm(false)
-    setIsSubmitting(false)
+    try {
+      const result = await addTimetableEntry({
+        day_of_week: activeDay,
+        subject,
+        start_time: startTime,
+        end_time: endTime,
+        room,
+        teacher,
+        color
+      })
+      // Only a confirmed save clears the form. On failure it stays open and filled (the layout shows what went wrong).
+      if (result?.error) return
+      setSubject('')
+      setStartTime('')
+      setEndTime('')
+      setRoom('')
+      setTeacher('')
+      setColor(COLORS[0])
+      setShowForm(false)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   // Get entries for the active day, sorted by start time
@@ -119,7 +127,9 @@ function Timetable() {
         </div>
 
         <div className="timetable-list">
-          {dayEntries.length === 0 ? (
+          {timetableUnavailable ? (
+            <div className="empty-tasks">{loading ? 'Loading your timetable…' : 'Your timetable could not be loaded. Use Retry above.'}</div>
+          ) : dayEntries.length === 0 ? (
             <div className="empty-tasks">No classes scheduled for {DAYS[activeDay]}. Enjoy your day! 🎉</div>
           ) : (
             <div className="schedule-timeline">
@@ -138,7 +148,7 @@ function Timetable() {
                     <div className="timeline-content" style={{ borderLeftColor: entry.color }}>
                       <div className="timeline-header">
                         <h3>{entry.subject}</h3>
-                        <button className="delete-task" onClick={() => deleteTimetableEntry(entry.id)}>🗑</button>
+                        <button className="delete-task" onClick={() => deleteTimetableEntry(entry.id)} disabled={isBusy(`timetable:${entry.id}`)}>🗑</button>
                       </div>
                       <div className="timeline-details">
                         {entry.room && <span>📍 {entry.room}</span>}

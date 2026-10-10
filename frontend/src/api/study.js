@@ -1,12 +1,8 @@
 // Docs/CONTRACT.md ke endpoints. Pages yahin se call karein, fetch duplicate na karein.
-import { authFetch } from './authFetch'
+import { apiJson } from './authFetch'
 
-async function request(url, options) {
-  const res = await authFetch(url, options)
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`)
-  return data
-}
+// Every call below goes through apiJson: auth token, timeout, readable errors (network / timeout / HTTP status).
+const request = (url, options) => apiJson(url, options)
 
 const postJson = (url, body) =>
   request(url, {

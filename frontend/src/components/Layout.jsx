@@ -33,7 +33,19 @@ const NAV_GROUPS = [
 ]
 
 function Layout({ context }) {
-  const { handleLogout, studySubjects, activeSubjectId, selectSubject, name, email } = context
+  const {
+    handleLogout,
+    studySubjects,
+    activeSubjectId,
+    selectSubject,
+    name,
+    email,
+    notice,
+    dismissNotice,
+    dataStatus,
+    dataError,
+    retryLoad,
+  } = context
   const { pathname } = useLocation()
   const [navOpen, setNavOpen] = useState(false)   // mobile drawer
   const showSubjectPicker = STUDY_ROUTES.includes(pathname) && studySubjects.length > 0
@@ -114,6 +126,20 @@ function Layout({ context }) {
               </select>
             </div>
           )}
+          <div className="app-alerts">
+            {notice && (
+              <div className={`app-banner ${notice.type}`} role="alert">
+                <span>{notice.text}</span>
+                <button type="button" className="app-banner-close" onClick={dismissNotice} aria-label="Dismiss message">✕</button>
+              </div>
+            )}
+            {dataStatus === 'error' && (
+              <div className="app-banner error" role="alert">
+                <span>{dataError}</span>
+                <button type="button" className="app-banner-action" onClick={retryLoad}>Retry</button>
+              </div>
+            )}
+          </div>
           <Outlet context={context} />
         </main>
       </div>

@@ -8,10 +8,13 @@ function Tasks() {
     newTaskPriority, setNewTaskPriority,
     newTaskCategory, setNewTaskCategory,
     addTask, toggleTask, deleteTask,
-    prioritizeTasks, isPrioritizing
+    prioritizeTasks, isPrioritizing,
+    dataStatus, failedParts, isBusy
   } = useOutletContext()
 
   const completedTasks = tasks.filter((task) => task.completed).length
+  const loading = dataStatus === 'loading'
+  const tasksUnavailable = loading || failedParts.includes('tasks')   // not loaded: do not claim "no tasks yet"
 
   return (
     <>
@@ -72,13 +75,15 @@ function Tasks() {
             onChange={(e) => setNewTaskCategory(e.target.value)}
             className="category-input"
           />
-          <button type="submit" className="primary-btn">
+          <button type="submit" className="primary-btn" disabled={isBusy('addTask')}>
             + Add Task
           </button>
         </form>
 
         <div className="task-list">
-          {tasks.length === 0 ? (
+          {tasksUnavailable ? (
+            <div className="empty-tasks">{loading ? 'Loading your tasks…' : 'Your tasks could not be loaded. Use Retry above.'}</div>
+          ) : tasks.length === 0 ? (
             <div className="empty-tasks">No tasks yet. Add your first task! 🚀</div>
           ) : (
             tasks.map((task) => (
@@ -87,7 +92,7 @@ function Tasks() {
                 key={task.id}
               >
                 <div className="task-main-row">
-                  <button className="task-check" onClick={() => toggleTask(task)}>
+                  <button className="task-check" onClick={() => toggleTask(task)} disabled={isBusy(`task:${task.id}`)}>
                     {task.completed ? '✓' : ''}
                   </button>
                   <div className="task-content">
@@ -100,7 +105,7 @@ function Tasks() {
                       </span>
                     </div>
                   </div>
-                  <button className="delete-task" onClick={() => deleteTask(task.id)}>
+                  <button className="delete-task" onClick={() => deleteTask(task.id)} disabled={isBusy(`task:${task.id}`)}>
                     🗑
                   </button>
                 </div>

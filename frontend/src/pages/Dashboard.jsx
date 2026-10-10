@@ -19,8 +19,21 @@ function Dashboard() {
     studyPlan,
     studySubjects,
     activeSubjectId,
+    dataStatus,
+    failedParts,
+    isBusy,
   } = useOutletContext()
   const navigate = useNavigate()
+
+  // Data that has not loaded (yet) must not look like "you have nothing": show that it is loading / failed instead
+  const loading = dataStatus === 'loading'
+  const unavailable = (part) => loading || failedParts.includes(part)
+  const tasksUnavailable = unavailable('tasks')
+  const scheduleUnavailable = unavailable('timetable')
+  const attendanceUnavailable = unavailable('attendance subjects')
+  const topicsUnavailable = unavailable('study topics')
+  const placeholder = loading ? '…' : '—'
+  const stateNote = loading ? 'Loading…' : 'Could not load'
 
   const completedTasks = tasks.filter((task) => task.completed).length
   const pendingAll = tasks.filter((task) => !task.completed)
@@ -48,7 +61,16 @@ function Dashboard() {
   const hasPlan = Boolean(studyPlan?.blocks?.length)
 
   let hero
-  if (topics.length === 0) {
+  if (topicsUnavailable) {
+    hero = {
+      eyebrow: 'Exam prep',
+      title: loading ? 'Loading your study progress…' : 'Your study topics could not be loaded',
+      text: loading ? 'One moment while your topics and ranking load.' : 'Use Retry above to try again. Nothing was lost.',
+      pills: [],
+      primary: null,
+      secondary: null,
+    }
+  } else if (topics.length === 0) {
     hero = {
       eyebrow: 'Exam prep',
       title: 'Turn your past papers into a study plan',
@@ -122,14 +144,16 @@ function Dashboard() {
             </div>
           )}
         </div>
-        <div className="dx-hero-actions">
-          <button type="button" className="dx-btn dx-btn-light" onClick={hero.primary.onClick}>
-            {hero.primary.label}
-          </button>
-          <button type="button" className="dx-btn dx-btn-ghost" onClick={hero.secondary.onClick}>
-            {hero.secondary.label}
-          </button>
-        </div>
+        {hero.primary && (
+          <div className="dx-hero-actions">
+            <button type="button" className="dx-btn dx-btn-light" onClick={hero.primary.onClick}>
+              {hero.primary.label}
+            </button>
+            <button type="button" className="dx-btn dx-btn-ghost" onClick={hero.secondary.onClick}>
+              {hero.secondary.label}
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="dx-stats" aria-label="Overview">
@@ -137,8 +161,8 @@ function Dashboard() {
           <div className="dx-stat-icon violet">✓</div>
           <div>
             <span>Pending tasks</span>
-            <strong>{pendingAll.length}</strong>
-            <small>{tasks.length} in total</small>
+            <strong>{tasksUnavailable ? placeholder : pendingAll.length}</strong>
+            <small>{tasksUnavailable ? stateNote : `${tasks.length} in total`}</small>
           </div>
         </div>
 
@@ -146,8 +170,8 @@ function Dashboard() {
           <div className="dx-stat-icon green">✔</div>
           <div>
             <span>Completed</span>
-            <strong>{completedTasks}</strong>
-            <small>{tasks.length === 0 ? 'No tasks yet' : `of ${tasks.length} tasks`}</small>
+            <strong>{tasksUnavailable ? placeholder : completedTasks}</strong>
+            <small>{tasksUnavailable ? stateNote : tasks.length === 0 ? 'No tasks yet' : `of ${tasks.length} tasks`}</small>
           </div>
         </div>
 
@@ -155,15 +179,17 @@ function Dashboard() {
           <div className="dx-stat-icon blue">◷</div>
           <div>
             <span>Attendance</span>
-            <strong className={attendancePct !== null && attendancePct < 75 ? 'is-low' : ''}>
-              {attendancePct === null ? '—' : `${attendancePct}%`}
+            <strong className={!attendanceUnavailable && attendancePct !== null && attendancePct < 75 ? 'is-low' : ''}>
+              {attendanceUnavailable || attendancePct === null ? placeholder : `${attendancePct}%`}
             </strong>
             <small>
-              {attendancePct === null
-                ? 'No classes tracked yet'
-                : attendancePct < 75
-                  ? 'Below the 75% mark'
-                  : `${attendedClasses} of ${totalClasses} classes`}
+              {attendanceUnavailable
+                ? stateNote
+                : attendancePct === null
+                  ? 'No classes tracked yet'
+                  : attendancePct < 75
+                    ? 'Below the 75% mark'
+                    : `${attendedClasses} of ${totalClasses} classes`}
             </small>
           </div>
         </div>
@@ -172,8 +198,8 @@ function Dashboard() {
           <div className="dx-stat-icon amber">◈</div>
           <div>
             <span>Study topics</span>
-            <strong>{topics.length}</strong>
-            <small>{activeSubject ? activeSubject.name : 'No subject yet'}</small>
+            <strong>{topicsUnavailable ? placeholder : topics.length}</strong>
+            <small>{topicsUnavailable ? stateNote : activeSubject ? activeSubject.name : 'No subject yet'}</small>
           </div>
         </div>
       </section>
@@ -184,7 +210,7 @@ function Dashboard() {
             <div className="card-header">
               <div>
                 <h2>Today's Tasks</h2>
-                <p>Stay on top of your work · {pendingAll.length} pending</p>
+                <p>Stay on top of your work{tasksUnavailable ? '' : ` · ${pendingAll.length} pending`}</p>
               </div>
             </div>
 
@@ -195,19 +221,21 @@ function Dashboard() {
                 value={newTask}
                 onChange={(e) => setNewTask(e.target.value)}
               />
-              <button type="submit" className="primary-btn">
+              <button type="submit" className="primary-btn" disabled={isBusy('addTask')}>
                 + Add Task
               </button>
             </form>
 
             <div className="task-list">
-              {pendingTasks.length === 0 ? (
+              {tasksUnavailable ? (
+                <div className="dx-empty">{loading ? 'Loading your tasks…' : 'Your tasks could not be loaded. Use Retry above.'}</div>
+              ) : pendingTasks.length === 0 ? (
                 <div className="empty-tasks">No pending tasks! 🎉</div>
               ) : (
                 pendingTasks.map((task) => (
                   <div className={`task-item ${task.completed ? 'completed' : ''}`} key={task.id}>
                     <div className="task-main-row">
-                      <button className="task-check" onClick={() => toggleTask(task)} aria-label="Mark as done">
+                      <button className="task-check" onClick={() => toggleTask(task)} aria-label="Mark as done" disabled={isBusy(`task:${task.id}`)}>
                         {task.completed ? '✓' : ''}
                       </button>
                       <div className="task-content">
@@ -219,7 +247,7 @@ function Dashboard() {
                           )}
                         </div>
                       </div>
-                      <button className="delete-task" onClick={() => deleteTask(task.id)} aria-label="Delete task">
+                      <button className="delete-task" onClick={() => deleteTask(task.id)} aria-label="Delete task" disabled={isBusy(`task:${task.id}`)}>
                         🗑
                       </button>
                     </div>
@@ -260,7 +288,9 @@ function Dashboard() {
             </div>
 
             <div className="schedule-list">
-              {todaysSchedule.length === 0 ? (
+              {scheduleUnavailable ? (
+                <div className="dx-empty">{loading ? 'Loading your timetable…' : 'Your timetable could not be loaded. Use Retry above.'}</div>
+              ) : todaysSchedule.length === 0 ? (
                 <div className="dx-empty">No classes today!</div>
               ) : (
                 todaysSchedule.map((entry) => (
@@ -293,7 +323,7 @@ function Dashboard() {
                       <strong>{step.title}</strong>
                       <small>{step.hint}</small>
                     </span>
-                    <span className="dx-step-state">{step.noState ? 'Open →' : step.done ? 'Done' : 'To do'}</span>
+                    <span className="dx-step-state">{step.noState ? 'Open →' : topicsUnavailable ? placeholder : step.done ? 'Done' : 'To do'}</span>
                   </button>
                 </li>
               ))}
